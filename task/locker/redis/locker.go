@@ -132,10 +132,12 @@ func (l *locker) renew(mutex *mutexData) error {
 		err   error
 		reply bool
 	)
+
 	idx := hash.Sum(mutex.key) % int64(len(l.caches))
+	duration := fmt.Sprintf("%d", LockerTouchTimeout*2/time.Second)
 
 	for i := 0; i < 3; i++ {
-		reply, err = l.caches[idx].Eval(touchScript, []string{mutex.key}, mutex.value, LockerTouchTimeout*2).Bool()
+		reply, err = l.caches[idx].Eval(touchScript, []string{mutex.key}, mutex.value, duration).Bool()
 		if err != nil {
 			time.Sleep(time.Second)
 			continue
