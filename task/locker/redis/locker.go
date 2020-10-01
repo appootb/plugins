@@ -11,7 +11,7 @@ import (
 	"github.com/appootb/substratum/task"
 	"github.com/appootb/substratum/util/hash"
 	"github.com/appootb/substratum/util/random"
-	"github.com/go-redis/redis"
+	"github.com/go-redis/redis/v8"
 )
 
 const (
@@ -42,7 +42,9 @@ var (
 )
 
 var (
-	Locker = &locker{}
+	Locker = &locker{
+		ctx: context.Background(),
+	}
 )
 
 func init() {
@@ -62,6 +64,7 @@ type mutexData struct {
 }
 
 type locker struct {
+	ctx    context.Context
 	mutex  sync.Map
 	caches []redis.Cmdable
 }
@@ -77,7 +80,7 @@ func (l *locker) Lock(ctx context.Context, scheduler string) context.Context {
 	idx := hash.Sum(mutex.key) % int64(len(l.caches))
 
 	for {
-		reply, err := l.caches[idx].SetNX(mutex.key, mutex.value, LockerTouchTimeout*2).Result()
+		reply, err := l.caches[idx].SetNX(l.ctx, mutex.key, mutex.value, LockerTouchTimeout*2).Result()
 		if err != nil || !reply {
 			time.Sleep(LockerTouchTimeout)
 		} else {
@@ -98,7 +101,7 @@ func (l *locker) Unlock(scheduler string) {
 	}
 	mutex := v.(*mutexData)
 	idx := hash.Sum(mutex.key) % int64(len(l.caches))
-	status, err := l.caches[idx].Eval(deleteScript, []string{mutex.key}, mutex.value).Bool()
+	status, err := l.caches[idx].Eval(l.ctx, deleteScript, []string{mutex.key}, mutex.value).Bool()
 	if err != nil {
 		// TODO err
 	}
@@ -137,7 +140,7 @@ func (l *locker) renew(mutex *mutexData) error {
 	duration := fmt.Sprintf("%d", LockerTouchTimeout*2/time.Second)
 
 	for i := 0; i < 3; i++ {
-		reply, err = l.caches[idx].Eval(touchScript, []string{mutex.key}, mutex.value, duration).Bool()
+		reply, err = l.caches[idx].Eval(l.ctx, touchScript, []string{mutex.key}, mutex.value, duration).Bool()
 		if err != nil {
 			time.Sleep(time.Second)
 			continue

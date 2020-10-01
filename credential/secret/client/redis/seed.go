@@ -1,6 +1,7 @@
 package redis
 
 import (
+	"context"
 	"encoding/base64"
 	"fmt"
 	"strconv"
@@ -10,7 +11,7 @@ import (
 	"github.com/appootb/substratum/credential"
 	"github.com/appootb/substratum/errors"
 	"github.com/appootb/substratum/storage"
-	"github.com/go-redis/redis"
+	"github.com/go-redis/redis/v8"
 )
 
 const (
@@ -19,6 +20,7 @@ const (
 
 var (
 	Seed = &seed{
+		ctx:    context.Background(),
 		expire: time.Hour * 24 * 7,
 	}
 )
@@ -32,6 +34,7 @@ func InitRedis(s storage.Storage) {
 }
 
 type seed struct {
+	ctx    context.Context
 	expire time.Duration
 	caches []redis.Cmdable
 }
@@ -46,17 +49,17 @@ func (s *seed) Add(accountID uint64, keyID int64, val []byte) error {
 	key := fmt.Sprintf(UserSecretSeedKey, accountID)
 	field := strconv.FormatInt(keyID, 10)
 	v := base64.StdEncoding.EncodeToString(val)
-	if err := cache.HSet(key, field, v).Err(); err != nil {
+	if err := cache.HSet(s.ctx, key, field, v).Err(); err != nil {
 		return err
 	}
-	return cache.Expire(key, s.expire).Err()
+	return cache.Expire(s.ctx, key, s.expire).Err()
 }
 
 // Get secret key.
 func (s *seed) Get(accountID uint64, keyID int64) ([]byte, error) {
 	key := fmt.Sprintf(UserSecretSeedKey, accountID)
 	field := strconv.FormatInt(keyID, 10)
-	v, err := s.getRedis(accountID).HGet(key, field).Result()
+	v, err := s.getRedis(accountID).HGet(s.ctx, key, field).Result()
 	if storage.IsEmpty(err) {
 		return nil, errors.New(code.Error_ACCOUNT_LOGIN_REQUIRED, "")
 	} else if err != nil {
@@ -69,11 +72,11 @@ func (s *seed) Get(accountID uint64, keyID int64) ([]byte, error) {
 func (s *seed) Revoke(accountID uint64, keyID int64) error {
 	key := fmt.Sprintf(UserSecretSeedKey, accountID)
 	field := strconv.FormatInt(keyID, 10)
-	return s.getRedis(accountID).HDel(key, field).Err()
+	return s.getRedis(accountID).HDel(s.ctx, key, field).Err()
 }
 
 // Revoke all secret keys of the specified account ID.
 func (s *seed) RevokeAll(accountID uint64) error {
 	key := fmt.Sprintf(UserSecretSeedKey, accountID)
-	return s.getRedis(accountID).Del(key).Err()
+	return s.getRedis(accountID).Del(s.ctx, key).Err()
 }
