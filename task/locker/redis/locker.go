@@ -69,7 +69,7 @@ type locker struct {
 	caches []redis.Cmdable
 }
 
-// Get the locker of the scheduler,
+// Lock tries to get the locker of the scheduler,
 // should be blocked before acquired the locker.
 func (l *locker) Lock(ctx context.Context, scheduler string) context.Context {
 	mutex := &mutexData{
@@ -93,7 +93,7 @@ func (l *locker) Lock(ctx context.Context, scheduler string) context.Context {
 	return mutex.ctx
 }
 
-// Give up the schedule locker.
+// Unlock gives up the schedule locker.
 func (l *locker) Unlock(scheduler string) {
 	v, ok := l.mutex.Load(scheduler)
 	if !ok {

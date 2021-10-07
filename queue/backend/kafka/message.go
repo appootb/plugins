@@ -1,15 +1,17 @@
 package kafka
 
 import (
+	"context"
 	"log"
 	"strconv"
 	"time"
 
-	"github.com/Shopify/sarama"
+	"github.com/segmentio/kafka-go"
 )
 
 type message struct {
-	svr *kafka
+	ctx context.Context
+	svr *kafkaBackend
 
 	topic string
 	group string
@@ -17,7 +19,7 @@ type message struct {
 	key       string
 	content   []byte
 	timestamp time.Time
-	headers   []*sarama.RecordHeader
+	headers   []kafka.Header
 }
 
 // Queue name of this message.
@@ -30,30 +32,30 @@ func (m *message) Topic() string {
 	return m.group
 }
 
-// Unique ID of this message.
+// UniqueID returns the unique ID of this message.
 func (m *message) UniqueID() string {
 	return m.key
 }
 
-// Message body content.
+// Content returns the message body content.
 func (m *message) Content() []byte {
 	return m.content
 }
 
-// The creation time of the message.
+// Timestamp indicates the creation time of the message.
 func (m *message) Timestamp() time.Time {
 	return m.timestamp
 }
 
-// The message should not be processed before this timestamp.
+// NotBefore indicates the message should not be processed before this timestamp.
 func (m *message) NotBefore() time.Time {
 	return time.Time{}
 }
 
-// Message retry times.
+// Retry times.
 func (m *message) Retry() int {
 	for _, header := range m.headers {
-		if string(header.Key) == "retry" {
+		if header.Key == "retry" {
 			retry, _ := strconv.Atoi(string(header.Value))
 			return retry
 		}
@@ -61,7 +63,7 @@ func (m *message) Retry() int {
 	return 0
 }
 
-// Return true for a ping message.
+// IsPing returns true for a ping message.
 func (m *message) IsPing() bool {
 	return false
 }
@@ -69,7 +71,7 @@ func (m *message) IsPing() bool {
 // Begin to process the message.
 func (m *message) Begin() {}
 
-// Indicate the message should be ignored.
+// Cancel indicates the message should be ignored.
 func (m *message) Cancel() {}
 
 // End indicates a successful process.
@@ -77,17 +79,17 @@ func (m *message) End() {}
 
 // Requeue indicates the message should be retried.
 func (m *message) Requeue() {
-	err := m.svr.writeMessage(&sarama.ProducerMessage{
+	err := m.svr.writeMessage(m.ctx, kafka.Message{
 		Topic: m.topic,
-		Key:   sarama.StringEncoder(m.key),
-		Value: sarama.ByteEncoder(m.content),
-		Headers: []sarama.RecordHeader{
+		Key:   []byte(m.key),
+		Value: m.content,
+		Headers: []kafka.Header{
 			{
-				Key:   []byte("retry"),
+				Key:   "retry",
 				Value: []byte(strconv.Itoa(m.Retry() + 1)),
 			},
 		},
-		Timestamp: m.timestamp,
+		Time: m.timestamp,
 	})
 	if err != nil {
 		log.Printf("kafka requeue err: %v", err)

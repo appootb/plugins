@@ -2,149 +2,188 @@ package kafka
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"log"
 	"sync"
 	"time"
 
-	"github.com/Shopify/sarama"
 	"github.com/appootb/substratum/queue"
 	"github.com/appootb/substratum/util/snowflake"
+	"github.com/segmentio/kafka-go"
 )
 
 var (
-	Backend = &kafka{}
+	Backend = &kafkaBackend{}
 )
 
 func init() {
 	queue.RegisterBackendImplementor(Backend)
 }
 
-type ConfigOption func(*sarama.Config)
-
-func Init(addrs []string, opts ...ConfigOption) {
-	config := sarama.NewConfig()
-	config.Producer.Return.Successes = true
-	config.Consumer.Offsets.Initial = sarama.OffsetOldest
-	for _, o := range opts {
-		o(config)
-	}
+func Init(addrs []string) {
 	Backend.addrs = addrs
-	Backend.config = config
 }
 
-type kafka struct {
-	addrs  []string
-	config *sarama.Config
-
+type kafkaBackend struct {
+	addrs    []string
 	producer sync.Map
 }
 
-// Backend type.
-func (s *kafka) Type() string {
+// Type returns backend type.
+func (s *kafkaBackend) Type() string {
 	return "kafka"
 }
 
 // Ping connect the backend server if not connected.
 // Will be called before every Read/Write operation.
-func (s *kafka) Ping() error {
+func (s *kafkaBackend) Ping() error {
 	return nil
 }
 
-// Return the max delay duration supported by the backend.
+// MaxDelay returns the max delay duration supported by the backend.
 // A negative value means no limitation.
 // A zero value means delay operation is not supported.
-func (s *kafka) MaxDelay() time.Duration {
+func (s *kafkaBackend) MaxDelay() time.Duration {
 	// Delay is unsupported
 	return 0
 }
 
-// Return all queue names in backend storage.
-func (s *kafka) GetQueues() ([]string, error) {
+// GetQueues returns all queue names in backend storage.
+func (s *kafkaBackend) GetQueues() ([]string, error) {
 	// Unsupported
 	return []string{}, nil
 }
 
-// Return all queue/topics in backend storage.
-func (s *kafka) GetTopics() (map[string][]string, error) {
+// GetTopics returns all queue/topics in backend storage.
+func (s *kafkaBackend) GetTopics() (map[string][]string, error) {
 	// Unsupported
 	return map[string][]string{}, nil
 }
 
-// Return all topic length of specified queue in backend storage.
-func (s *kafka) GetQueueLength(_ string) (map[string]int64, error) {
+// GetQueueLength returns all topic length of specified queue in backend storage.
+func (s *kafkaBackend) GetQueueLength(_ string) (map[string]int64, error) {
 	// Unsupported
 	return map[string]int64{}, nil
 }
 
-// Return the specified queue/topic length in backend storage.
-func (s *kafka) GetTopicLength(_, _ string) (int64, error) {
+// GetTopicLength returns the specified queue/topic length in backend storage.
+func (s *kafkaBackend) GetTopicLength(_, _ string) (int64, error) {
 	// Unsupported
 	return 0, nil
 }
 
 // Read subscribes the message of the specified queue and topic.
-func (s *kafka) Read(ctx context.Context, topic, group string, ch chan<- queue.MessageWrapper) error {
-	consumer, err := sarama.NewConsumerGroup(s.addrs, group, s.config)
-	if err != nil {
-		return err
-	}
-	//
-	h := &handler{
-		svr:   s,
-		topic: topic,
-		group: group,
-		ch:    ch,
-	}
+func (s *kafkaBackend) Read(ctx context.Context, topic, group string, ch chan<- queue.MessageWrapper) error {
+	consumer := s.newConsumer(topic, group)
+
+	var (
+		err error
+		msg kafka.Message
+	)
+
 	go func() {
-		err := consumer.Consume(ctx, []string{topic}, h)
-		if err != nil {
-			log.Panicf("error from kafka consumer: %v", err)
-		}
-		// Exiting...
-		if ctx.Err() != nil {
-			return
+		for {
+			msg, err = consumer.ReadMessage(ctx)
+			if errors.Is(err, io.EOF) {
+				err = consumer.Close()
+				if err != nil {
+					log.Println("closing kafka consumer err:", err.Error())
+				}
+				consumer = s.newConsumer(topic, group)
+				continue
+			} else if err != nil {
+				log.Fatal("error from kafka consumer:", err.Error())
+			}
+
+			ch <- &message{
+				svr:       s,
+				ctx:       ctx,
+				topic:     topic,
+				group:     group,
+				key:       string(msg.Key),
+				content:   msg.Value,
+				timestamp: msg.Time,
+				headers:   msg.Headers,
+			}
 		}
 	}()
+
 	return nil
 }
 
 // Write publishes content data to the specified queue.
-func (s *kafka) Write(_ context.Context, topic string, _ time.Duration, content []byte) error {
+func (s *kafkaBackend) Write(ctx context.Context, topic string, _ time.Duration, content []byte) error {
 	keyID, err := snowflake.NextID()
 	if err != nil {
 		return err
 	}
-	return s.writeMessage(&sarama.ProducerMessage{
+	return s.writeMessage(ctx, kafka.Message{
 		Topic: topic,
-		Key:   sarama.StringEncoder(fmt.Sprintf("%s-%d", topic, keyID)),
-		Value: sarama.ByteEncoder(content),
-		Headers: []sarama.RecordHeader{
+		Key:   []byte(fmt.Sprintf("%s-%d", topic, keyID)),
+		Value: content,
+		Headers: []kafka.Header{
 			{
-				Key:   []byte("retry"),
+				Key:   "retry",
 				Value: []byte("0"),
 			},
 		},
 	})
 }
 
-func (s *kafka) writeMessage(msg *sarama.ProducerMessage) error {
+func (s *kafkaBackend) newConsumer(topic, group string) *kafka.Reader {
+	return kafka.NewReader(kafka.ReaderConfig{
+		Brokers:                s.addrs,
+		GroupID:                group,
+		Topic:                  topic,
+		MinBytes:               0,
+		MaxWait:                200 * time.Millisecond,
+		ReadLagInterval:        0,
+		HeartbeatInterval:      3 * time.Second,
+		CommitInterval:         0,
+		PartitionWatchInterval: 5 * time.Second,
+		WatchPartitionChanges:  true,
+		SessionTimeout:         30 * time.Second,
+		RebalanceTimeout:       30 * time.Second,
+		JoinGroupBackoff:       5 * time.Second,
+		RetentionTime:          24 * time.Hour,
+		StartOffset:            kafka.FirstOffset,
+		ReadBackoffMin:         100 * time.Millisecond,
+		ReadBackoffMax:         time.Second,
+		Logger:                 &debugLogger{},
+		ErrorLogger:            &errorLogger{},
+		IsolationLevel:         kafka.ReadCommitted,
+		MaxAttempts:            3,
+	})
+}
+
+func (s *kafkaBackend) writeMessage(ctx context.Context, msg kafka.Message) error {
 	var (
-		err      error
-		producer sarama.SyncProducer
+		producer *kafka.Writer
 	)
 	if p, ok := s.producer.Load(msg.Topic); ok {
-		producer = p.(sarama.SyncProducer)
+		producer = p.(*kafka.Writer)
 	} else {
-		producer, err = sarama.NewSyncProducer(s.addrs, s.config)
-		if err != nil {
-			return err
+		producer = &kafka.Writer{
+			Addr:         kafka.TCP(s.addrs...),
+			Topic:        msg.Topic,
+			MaxAttempts:  10,
+			BatchSize:    1,
+			BatchTimeout: 200 * time.Millisecond,
+			ReadTimeout:  10 * time.Second,
+			WriteTimeout: 10 * time.Second,
+			RequiredAcks: kafka.RequireOne,
+			Async:        false,
+			Compression:  0,
+			Logger:       &debugLogger{},
+			ErrorLogger:  &errorLogger{},
+			Transport:    kafka.DefaultTransport,
 		}
 		if p, loaded := s.producer.LoadOrStore(msg.Topic, producer); loaded {
 			_ = producer.Close()
-			producer = p.(sarama.SyncProducer)
+			producer = p.(*kafka.Writer)
 		}
 	}
-	_, _, err = producer.SendMessage(msg)
-	return err
+	return producer.WriteMessages(ctx, msg)
 }
