@@ -3,7 +3,7 @@ package postgres
 import (
 	"fmt"
 
-	"github.com/appootb/substratum/storage"
+	"github.com/appootb/substratum/v2/storage"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )

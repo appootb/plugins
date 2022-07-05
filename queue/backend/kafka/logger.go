@@ -3,7 +3,7 @@ package kafka
 import (
 	"fmt"
 
-	"github.com/appootb/substratum/logger"
+	"github.com/appootb/substratum/v2/logger"
 )
 
 type debugLogger struct{}

@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/appootb/substratum/queue"
-	"github.com/appootb/substratum/util/snowflake"
+	"github.com/appootb/substratum/v2/queue"
+	"github.com/appootb/substratum/v2/util/snowflake"
 	"github.com/segmentio/kafka-go"
 )
 
@@ -148,7 +148,7 @@ func (s *kafkaBackend) newConsumer(topic, group string) *kafka.Reader {
 		RebalanceTimeout:       30 * time.Second,
 		JoinGroupBackoff:       5 * time.Second,
 		RetentionTime:          24 * time.Hour,
-		StartOffset:            kafka.FirstOffset,
+		StartOffset:            kafka.LastOffset,
 		ReadBackoffMin:         100 * time.Millisecond,
 		ReadBackoffMax:         time.Second,
 		Logger:                 &debugLogger{},
@@ -180,9 +180,9 @@ func (s *kafkaBackend) writeMessage(ctx context.Context, msg kafka.Message) erro
 			ErrorLogger:  &errorLogger{},
 			Transport:    kafka.DefaultTransport,
 		}
-		if p, loaded := s.producer.LoadOrStore(msg.Topic, producer); loaded {
+		if pp, loaded := s.producer.LoadOrStore(msg.Topic, producer); loaded {
 			_ = producer.Close()
-			producer = p.(*kafka.Writer)
+			producer = pp.(*kafka.Writer)
 		}
 	}
 	return producer.WriteMessages(ctx, msg)

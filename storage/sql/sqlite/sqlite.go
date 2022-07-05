@@ -1,7 +1,7 @@
 package sqlite
 
 import (
-	"github.com/appootb/substratum/storage"
+	"github.com/appootb/substratum/v2/storage"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )

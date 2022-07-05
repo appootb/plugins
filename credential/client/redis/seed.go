@@ -7,9 +7,9 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/appootb/substratum/credential"
-	"github.com/appootb/substratum/errors"
-	"github.com/appootb/substratum/storage"
+	"github.com/appootb/substratum/v2/credential"
+	"github.com/appootb/substratum/v2/errors"
+	"github.com/appootb/substratum/v2/storage"
 	"github.com/go-redis/redis/v8"
 	"google.golang.org/grpc/codes"
 )
@@ -137,6 +137,8 @@ func (s *seed) Lock(accountID uint64, reason string, duration time.Duration) err
 	kvs, err := s.getRedis(accountID).HGetAll(s.ctx, key).Result()
 	if err != nil {
 		return err
+	} else if len(kvs) == 0 {
+		return nil
 	}
 	now := time.Now()
 	vals := make([]interface{}, 0, len(kvs)*2)
@@ -155,6 +157,8 @@ func (s *seed) Unlock(accountID uint64) error {
 	kvs, err := s.getRedis(accountID).HGetAll(s.ctx, key).Result()
 	if err != nil {
 		return err
+	} else if len(kvs) == 0 {
+		return nil
 	}
 	vals := make([]interface{}, 0, len(kvs)*2)
 	for field, val := range kvs {

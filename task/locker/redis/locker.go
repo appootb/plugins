@@ -7,10 +7,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/appootb/substratum/storage"
-	"github.com/appootb/substratum/task"
-	"github.com/appootb/substratum/util/hash"
-	"github.com/appootb/substratum/util/random"
+	"github.com/appootb/substratum/v2/storage"
+	"github.com/appootb/substratum/v2/task"
+	"github.com/appootb/substratum/v2/util/hash"
+	"github.com/appootb/substratum/v2/util/random"
 	"github.com/go-redis/redis/v8"
 )
 

@@ -3,7 +3,7 @@ package sqlserver
 import (
 	"fmt"
 
-	"github.com/appootb/substratum/storage"
+	"github.com/appootb/substratum/v2/storage"
 	"gorm.io/driver/sqlserver"
 	"gorm.io/gorm"
 )

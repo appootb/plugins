@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/appootb/substratum/queue"
-	"github.com/appootb/substratum/storage"
-	"github.com/appootb/substratum/util/hash"
+	"github.com/appootb/substratum/v2/queue"
+	"github.com/appootb/substratum/v2/storage"
+	"github.com/appootb/substratum/v2/util/hash"
 	"github.com/go-redis/redis/v8"
 )
 
