@@ -79,8 +79,7 @@ func (m *message) End() {}
 
 // Requeue indicates the message should be retried.
 func (m *message) Requeue() {
-	err := m.svr.writeMessage(m.ctx, kafka.Message{
-		Topic: m.topic,
+	err := m.svr.writeMessage(m.ctx, m.topic, kafka.Message{
 		Key:   []byte(m.key),
 		Value: m.content,
 		Headers: []kafka.Header{

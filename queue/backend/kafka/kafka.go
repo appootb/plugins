@@ -119,8 +119,7 @@ func (s *kafkaBackend) Write(ctx context.Context, topic string, _ time.Duration,
 	if err != nil {
 		return err
 	}
-	return s.writeMessage(ctx, kafka.Message{
-		Topic: topic,
+	return s.writeMessage(ctx, topic, kafka.Message{
 		Key:   []byte(fmt.Sprintf("%s-%d", topic, keyID)),
 		Value: content,
 		Headers: []kafka.Header{
@@ -158,16 +157,16 @@ func (s *kafkaBackend) newConsumer(topic, group string) *kafka.Reader {
 	})
 }
 
-func (s *kafkaBackend) writeMessage(ctx context.Context, msg kafka.Message) error {
+func (s *kafkaBackend) writeMessage(ctx context.Context, topic string, msg kafka.Message) error {
 	var (
 		producer *kafka.Writer
 	)
-	if p, ok := s.producer.Load(msg.Topic); ok {
+	if p, ok := s.producer.Load(topic); ok {
 		producer = p.(*kafka.Writer)
 	} else {
 		producer = &kafka.Writer{
 			Addr:         kafka.TCP(s.addrs...),
-			Topic:        msg.Topic,
+			Topic:        topic,
 			MaxAttempts:  10,
 			BatchSize:    1,
 			BatchTimeout: 200 * time.Millisecond,
@@ -180,7 +179,7 @@ func (s *kafkaBackend) writeMessage(ctx context.Context, msg kafka.Message) erro
 			ErrorLogger:  &errorLogger{},
 			Transport:    kafka.DefaultTransport,
 		}
-		if pp, loaded := s.producer.LoadOrStore(msg.Topic, producer); loaded {
+		if pp, loaded := s.producer.LoadOrStore(topic, producer); loaded {
 			_ = producer.Close()
 			producer = pp.(*kafka.Writer)
 		}

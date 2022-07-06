@@ -91,10 +91,10 @@ func (s *seed) Refresh(accountID uint64, keyID int64, expire time.Duration) ([]b
 		return nil, err
 	}
 	info.NotAfter = time.Now().Add(expire)
-	if err := cache.HSet(s.ctx, key, field, info.String()).Err(); err != nil {
+	if err = cache.HSet(s.ctx, key, field, info.String()).Err(); err != nil {
 		return nil, err
 	}
-	if err := cache.Expire(s.ctx, key, expire).Err(); err != nil {
+	if err = cache.Expire(s.ctx, key, expire).Err(); err != nil {
 		return nil, err
 	}
 	return info.PrivateKey, nil
