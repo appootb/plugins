@@ -18,28 +18,24 @@ type message struct {
 
 	key       string
 	content   []byte
+	props     map[string]string
 	timestamp time.Time
 	headers   []kafka.Header
 }
 
-// Queue name of this message.
-func (m *message) Queue() string {
-	return m.topic
-}
-
-// Topic name of this message.
-func (m *message) Topic() string {
-	return m.group
-}
-
-// UniqueID returns the unique ID of this message.
-func (m *message) UniqueID() string {
+// Key returns the unique key ID of this message.
+func (m *message) Key() string {
 	return m.key
 }
 
 // Content returns the message body content.
 func (m *message) Content() []byte {
 	return m.content
+}
+
+// Properties returns the properties of this message.
+func (m *message) Properties() map[string]string {
+	return m.props
 }
 
 // Timestamp indicates the creation time of the message.

@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/appootb/substratum/v2/configure"
 	"github.com/appootb/substratum/v2/queue"
-	"github.com/appootb/substratum/v2/util/snowflake"
 	"github.com/segmentio/kafka-go"
 )
 
@@ -22,7 +22,11 @@ func init() {
 	queue.RegisterBackendImplementor(Backend)
 }
 
-func Init(addrs []string) {
+func Init(configs []configure.Address) {
+	addrs := make([]string, 0, len(configs))
+	for _, cfg := range configs {
+		addrs = append(addrs, fmt.Sprintf("%s:%s", cfg.Host, cfg.Port))
+	}
 	Backend.addrs = addrs
 }
 
@@ -33,7 +37,7 @@ type kafkaBackend struct {
 
 // Type returns backend type.
 func (s *kafkaBackend) Type() string {
-	return "kafka"
+	return string(configure.Kafka)
 }
 
 // Ping connect the backend server if not connected.
@@ -42,41 +46,9 @@ func (s *kafkaBackend) Ping() error {
 	return nil
 }
 
-// MaxDelay returns the max delay duration supported by the backend.
-// A negative value means no limitation.
-// A zero value means delay operation is not supported.
-func (s *kafkaBackend) MaxDelay() time.Duration {
-	// Delay is unsupported
-	return 0
-}
-
-// GetQueues returns all queue names in backend storage.
-func (s *kafkaBackend) GetQueues() ([]string, error) {
-	// Unsupported
-	return []string{}, nil
-}
-
-// GetTopics returns all queue/topics in backend storage.
-func (s *kafkaBackend) GetTopics() (map[string][]string, error) {
-	// Unsupported
-	return map[string][]string{}, nil
-}
-
-// GetQueueLength returns all topic length of specified queue in backend storage.
-func (s *kafkaBackend) GetQueueLength(_ string) (map[string]int64, error) {
-	// Unsupported
-	return map[string]int64{}, nil
-}
-
-// GetTopicLength returns the specified queue/topic length in backend storage.
-func (s *kafkaBackend) GetTopicLength(_, _ string) (int64, error) {
-	// Unsupported
-	return 0, nil
-}
-
-// Read subscribes the message of the specified queue and topic.
-func (s *kafkaBackend) Read(ctx context.Context, topic, group string, ch chan<- queue.MessageWrapper) error {
-	consumer := s.newConsumer(topic, group)
+// Read subscribes the message of the specified topic.
+func (s *kafkaBackend) Read(topic string, ch chan<- queue.MessageWrapper, opts *queue.SubscribeOptions) error {
+	consumer := s.newConsumer(topic, opts.Group, opts.InitOffset)
 
 	var (
 		err error
@@ -85,25 +57,31 @@ func (s *kafkaBackend) Read(ctx context.Context, topic, group string, ch chan<- 
 
 	go func() {
 		for {
-			msg, err = consumer.ReadMessage(ctx)
+			msg, err = consumer.ReadMessage(opts.Context)
 			if errors.Is(err, io.EOF) {
 				err = consumer.Close()
 				if err != nil {
 					log.Println("closing kafka consumer err:", err.Error())
 				}
-				consumer = s.newConsumer(topic, group)
+				consumer = s.newConsumer(topic, opts.Group, opts.InitOffset)
 				continue
 			} else if err != nil {
 				log.Fatal("error from kafka consumer:", err.Error())
 			}
 
+			//
+			props := make(map[string]string, len(msg.Headers))
+			for _, header := range msg.Headers {
+				props[header.Key] = string(header.Value)
+			}
 			ch <- &message{
 				svr:       s,
-				ctx:       ctx,
+				ctx:       opts.Context,
 				topic:     topic,
-				group:     group,
+				group:     opts.Group,
 				key:       string(msg.Key),
 				content:   msg.Value,
+				props:     props,
 				timestamp: msg.Time,
 				headers:   msg.Headers,
 			}
@@ -114,13 +92,9 @@ func (s *kafkaBackend) Read(ctx context.Context, topic, group string, ch chan<- 
 }
 
 // Write publishes content data to the specified queue.
-func (s *kafkaBackend) Write(ctx context.Context, topic string, _ time.Duration, content []byte) error {
-	keyID, err := snowflake.NextID()
-	if err != nil {
-		return err
-	}
-	return s.writeMessage(ctx, topic, kafka.Message{
-		Key:   []byte(fmt.Sprintf("%s-%d", topic, keyID)),
+func (s *kafkaBackend) Write(topic string, content []byte, opts *queue.PublishOptions) error {
+	msg := kafka.Message{
+		Key:   []byte(opts.Key),
 		Value: content,
 		Headers: []kafka.Header{
 			{
@@ -128,10 +102,21 @@ func (s *kafkaBackend) Write(ctx context.Context, topic string, _ time.Duration,
 				Value: []byte("0"),
 			},
 		},
-	})
+	}
+	for key, val := range opts.Properties {
+		msg.Headers = append(msg.Headers, kafka.Header{
+			Key:   key,
+			Value: []byte(val),
+		})
+	}
+	return s.writeMessage(opts.Context, topic, msg)
 }
 
-func (s *kafkaBackend) newConsumer(topic, group string) *kafka.Reader {
+func (s *kafkaBackend) newConsumer(topic, group string, initOffset queue.ConsumeOffset) *kafka.Reader {
+	startOffset := kafka.LastOffset
+	if initOffset == queue.ConsumeFromEarliest {
+		startOffset = kafka.FirstOffset
+	}
 	return kafka.NewReader(kafka.ReaderConfig{
 		Brokers:                s.addrs,
 		GroupID:                group,
@@ -147,7 +132,7 @@ func (s *kafkaBackend) newConsumer(topic, group string) *kafka.Reader {
 		RebalanceTimeout:       30 * time.Second,
 		JoinGroupBackoff:       5 * time.Second,
 		RetentionTime:          24 * time.Hour,
-		StartOffset:            kafka.LastOffset,
+		StartOffset:            startOffset,
 		ReadBackoffMin:         100 * time.Millisecond,
 		ReadBackoffMax:         time.Second,
 		Logger:                 &debugLogger{},
