@@ -14,6 +14,10 @@ import (
 	"github.com/segmentio/kafka-go"
 )
 
+const (
+	PropertyRetry = "PLUGIN.RETRY"
+)
+
 var (
 	Backend = &kafkaBackend{}
 )
@@ -82,8 +86,7 @@ func (s *kafkaBackend) Read(topic string, ch chan<- queue.MessageWrapper, opts *
 				key:       string(msg.Key),
 				content:   msg.Value,
 				props:     props,
-				timestamp: msg.Time,
-				headers:   msg.Headers,
+				timestamp: msg.Time.In(time.Local),
 			}
 		}
 	}()
@@ -93,23 +96,25 @@ func (s *kafkaBackend) Read(topic string, ch chan<- queue.MessageWrapper, opts *
 
 // Write publishes content data to the specified queue.
 func (s *kafkaBackend) Write(topic string, content []byte, opts *queue.PublishOptions) error {
+	opts.Properties[PropertyRetry] = "0"
+	//
 	msg := kafka.Message{
-		Key:   []byte(opts.Key),
-		Value: content,
-		Headers: []kafka.Header{
-			{
-				Key:   "retry",
-				Value: []byte("0"),
-			},
-		},
-	}
-	for key, val := range opts.Properties {
-		msg.Headers = append(msg.Headers, kafka.Header{
-			Key:   key,
-			Value: []byte(val),
-		})
+		Key:     []byte(opts.Key),
+		Value:   content,
+		Headers: s.propsToHeaders(opts.Properties),
 	}
 	return s.writeMessage(opts.Context, topic, msg)
+}
+
+func (s *kafkaBackend) propsToHeaders(props map[string]string) []kafka.Header {
+	headers := make([]kafka.Header, 0, len(props))
+	for k, v := range props {
+		headers = append(headers, kafka.Header{
+			Key:   k,
+			Value: []byte(v),
+		})
+	}
+	return headers
 }
 
 func (s *kafkaBackend) newConsumer(topic, group string, initOffset queue.ConsumeOffset) *kafka.Reader {

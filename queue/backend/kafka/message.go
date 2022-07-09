@@ -20,7 +20,6 @@ type message struct {
 	content   []byte
 	props     map[string]string
 	timestamp time.Time
-	headers   []kafka.Header
 }
 
 // Key returns the unique key ID of this message.
@@ -50,13 +49,8 @@ func (m *message) NotBefore() time.Time {
 
 // Retry times.
 func (m *message) Retry() int {
-	for _, header := range m.headers {
-		if header.Key == "retry" {
-			retry, _ := strconv.Atoi(string(header.Value))
-			return retry
-		}
-	}
-	return 0
+	retry, _ := strconv.Atoi(m.props[PropertyRetry])
+	return retry
 }
 
 // IsPing returns true for a ping message.
@@ -75,16 +69,12 @@ func (m *message) End() {}
 
 // Requeue indicates the message should be retried.
 func (m *message) Requeue() {
+	m.props[PropertyRetry] = strconv.Itoa(m.Retry() + 1)
 	err := m.svr.writeMessage(m.ctx, m.topic, kafka.Message{
-		Key:   []byte(m.key),
-		Value: m.content,
-		Headers: []kafka.Header{
-			{
-				Key:   "retry",
-				Value: []byte(strconv.Itoa(m.Retry() + 1)),
-			},
-		},
-		Time: m.timestamp,
+		Key:     []byte(m.key),
+		Value:   m.content,
+		Headers: m.svr.propsToHeaders(m.Properties()),
+		Time:    m.timestamp,
 	})
 	if err != nil {
 		log.Printf("kafka requeue err: %v", err)
