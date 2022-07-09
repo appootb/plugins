@@ -3,6 +3,7 @@ package clickhouse
 import (
 	"fmt"
 
+	"github.com/appootb/substratum/v2/configure"
 	"github.com/appootb/substratum/v2/storage"
 	"gorm.io/driver/clickhouse"
 	"gorm.io/gorm"
@@ -14,8 +15,8 @@ func init() {
 
 type dialect struct{}
 
-func (s dialect) Open(cfg storage.Config) gorm.Dialector {
+func (s dialect) Open(cfg configure.Address) gorm.Dialector {
 	dsn := fmt.Sprintf("tcp://%s:%s?database=%s&username=%s&password=%s&%s",
-		cfg.Host, cfg.Port, cfg.Database, cfg.Username, cfg.Password, cfg.Params.Encode(cfg.Schema))
+		cfg.Host, cfg.Port, cfg.NameSpace, cfg.Username, cfg.Password, cfg.Params.Encode("&"))
 	return clickhouse.Open(dsn)
 }

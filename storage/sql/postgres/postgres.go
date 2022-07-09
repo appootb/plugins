@@ -3,6 +3,7 @@ package postgres
 import (
 	"fmt"
 
+	"github.com/appootb/substratum/v2/configure"
 	"github.com/appootb/substratum/v2/storage"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -14,10 +15,10 @@ func init() {
 
 type dialect struct{}
 
-func (s dialect) Open(cfg storage.Config) gorm.Dialector {
+func (s dialect) Open(cfg configure.Address) gorm.Dialector {
 	dsn := fmt.Sprintf("host=%s port=%s user=%s dbname=%s password=%s",
-		cfg.Host, cfg.Port, cfg.Username, cfg.Database, cfg.Password)
-	if params := cfg.Params.Encode(cfg.Schema); params != "" {
+		cfg.Host, cfg.Port, cfg.Username, cfg.NameSpace, cfg.Password)
+	if params := cfg.Params.Encode(" "); params != "" {
 		dsn = fmt.Sprintf("%s %s", dsn, params)
 	}
 	return postgres.Open(dsn)

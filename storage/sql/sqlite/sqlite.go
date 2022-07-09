@@ -1,6 +1,7 @@
 package sqlite
 
 import (
+	"github.com/appootb/substratum/v2/configure"
 	"github.com/appootb/substratum/v2/storage"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -12,6 +13,6 @@ func init() {
 
 type dialect struct{}
 
-func (s dialect) Open(cfg storage.Config) gorm.Dialector {
-	return sqlite.Open(cfg.Database)
+func (s dialect) Open(cfg configure.Address) gorm.Dialector {
+	return sqlite.Open(cfg.NameSpace)
 }
