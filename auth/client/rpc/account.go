@@ -14,15 +14,15 @@ import (
 )
 
 var (
-	Auth = &rpcAuth{}
+	impl = &rpcAuth{}
 )
 
 func init() {
-	auth.RegisterImplementor(auth.NewAlgorithmAuth(Auth, &token.JwtToken{}))
+	auth.RegisterImplementor(auth.NewAlgorithmAuth(impl, &token.JwtToken{}))
 }
 
-func InitKeyID(serverKeyID int64) {
-	Auth.serverKeyID = serverKeyID
+func InitServerRPCKey(serverKeyID int64) {
+	impl.serverKeyID = serverKeyID
 }
 
 type rpcAuth struct {

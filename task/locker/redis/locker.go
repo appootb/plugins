@@ -4,14 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"sync"
 	"time"
 
 	"github.com/appootb/substratum/v2/storage"
 	"github.com/appootb/substratum/v2/task"
-	"github.com/appootb/substratum/v2/util/hash"
 	"github.com/appootb/substratum/v2/util/random"
-	"github.com/go-redis/redis/v8"
 )
 
 const (
@@ -42,17 +41,18 @@ var (
 )
 
 var (
-	Locker = &locker{
-		ctx: context.Background(),
+	impl = &locker{
+		ctx:       context.Background(),
+		component: os.Getenv("COMPONENT"),
 	}
 )
 
 func init() {
-	task.RegisterLockerImplementor(Locker)
+	task.RegisterLockerImplementor(impl)
 }
 
-func InitRedis(s storage.Storage) {
-	Locker.caches = s.GetRedisz()
+func InitComponent(component string) {
+	impl.component = component
 }
 
 type mutexData struct {
@@ -64,9 +64,9 @@ type mutexData struct {
 }
 
 type locker struct {
-	ctx    context.Context
-	mutex  sync.Map
-	caches []redis.Cmdable
+	ctx       context.Context
+	mutex     sync.Map
+	component string
 }
 
 // Lock tries to get the locker of the scheduler,
@@ -77,10 +77,10 @@ func (l *locker) Lock(ctx context.Context, scheduler string) context.Context {
 		value: random.String(RandomValueLength),
 	}
 	mutex.ctx, mutex.cancel = context.WithCancel(ctx)
-	idx := hash.Sum(mutex.key) % int64(len(l.caches))
+	rds := storage.Implementor().Get(l.component).GetRedis(mutex.key)
 
 	for {
-		reply, err := l.caches[idx].SetNX(l.ctx, mutex.key, mutex.value, LockerTouchTimeout*2).Result()
+		reply, err := rds.SetNX(l.ctx, mutex.key, mutex.value, LockerTouchTimeout*2).Result()
 		if err != nil || !reply {
 			time.Sleep(LockerTouchTimeout)
 		} else {
@@ -100,8 +100,8 @@ func (l *locker) Unlock(scheduler string) {
 		return
 	}
 	mutex := v.(*mutexData)
-	idx := hash.Sum(mutex.key) % int64(len(l.caches))
-	status, err := l.caches[idx].Eval(l.ctx, deleteScript, []string{mutex.key}, mutex.value).Bool()
+	rds := storage.Implementor().Get(l.component).GetRedis(mutex.key)
+	status, err := rds.Eval(l.ctx, deleteScript, []string{mutex.key}, mutex.value).Bool()
 	if err != nil {
 		// TODO err
 	}
@@ -136,11 +136,11 @@ func (l *locker) renew(mutex *mutexData) error {
 		reply bool
 	)
 
-	idx := hash.Sum(mutex.key) % int64(len(l.caches))
+	rds := storage.Implementor().Get(l.component).GetRedis(mutex.key)
 	duration := fmt.Sprintf("%d", LockerTouchTimeout*2/time.Second)
 
 	for i := 0; i < 3; i++ {
-		reply, err = l.caches[idx].Eval(l.ctx, touchScript, []string{mutex.key}, mutex.value, duration).Bool()
+		reply, err = rds.Eval(l.ctx, touchScript, []string{mutex.key}, mutex.value, duration).Bool()
 		if err != nil {
 			time.Sleep(time.Second)
 			continue

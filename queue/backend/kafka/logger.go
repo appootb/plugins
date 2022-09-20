@@ -8,7 +8,7 @@ import (
 
 type debugLogger struct{}
 
-func (s debugLogger) Printf(msg string, args ...interface{}) {
+func (s *debugLogger) Printf(msg string, args ...interface{}) {
 	logger.Debug("kafka_debug", logger.Content{
 		"msg":  msg,
 		"args": fmt.Sprint(args...),
@@ -17,7 +17,7 @@ func (s debugLogger) Printf(msg string, args ...interface{}) {
 
 type errorLogger struct{}
 
-func (s errorLogger) Printf(msg string, args ...interface{}) {
+func (s *errorLogger) Printf(msg string, args ...interface{}) {
 	logger.Error("kafka_error", logger.Content{
 		"msg":  msg,
 		"args": fmt.Sprint(args...),

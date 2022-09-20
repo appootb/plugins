@@ -22,6 +22,16 @@ type message struct {
 	delay     time.Duration
 }
 
+// Topic name of this message.
+func (m *message) Topic() string {
+	return m.topic
+}
+
+// Group name of this message.
+func (m *message) Group() string {
+	return m.group
+}
+
 // Key returns the unique key ID of this message.
 func (m *message) Key() string {
 	return m.key

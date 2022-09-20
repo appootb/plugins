@@ -15,7 +15,7 @@ func init() {
 
 type dialect struct{}
 
-func (s dialect) Open(cfg configure.Address) gorm.Dialector {
+func (s *dialect) Open(cfg configure.Address) gorm.Dialector {
 	dsn := fmt.Sprintf("host=%s port=%s user=%s dbname=%s password=%s",
 		cfg.Host, cfg.Port, cfg.Username, cfg.NameSpace, cfg.Password)
 	if params := cfg.Params.Encode(" "); params != "" {

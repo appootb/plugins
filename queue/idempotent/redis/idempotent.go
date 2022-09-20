@@ -3,11 +3,11 @@ package redis
 import (
 	"context"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/appootb/substratum/v2/queue"
 	"github.com/appootb/substratum/v2/storage"
-	"github.com/appootb/substratum/v2/util/hash"
 	"github.com/go-redis/redis/v8"
 )
 
@@ -17,33 +17,34 @@ const (
 )
 
 var (
-	Queue = &idempotent{
-		ctx: context.Background(),
+	impl = &idempotent{
+		ctx:       context.Background(),
+		component: os.Getenv("COMPONENT"),
 	}
 )
 
 func init() {
-	queue.RegisterIdempotentImplementor(Queue)
+	queue.RegisterIdempotentImplementor(impl)
 }
 
-func InitRedis(s storage.Storage) {
-	Queue.caches = s.GetRedisz()
+func InitComponent(component string) {
+	impl.component = component
 }
 
 type idempotent struct {
-	ctx    context.Context
-	caches []redis.Cmdable
+	ctx       context.Context
+	component string
 }
 
 func (r *idempotent) getRedis(key string) redis.Cmdable {
-	return r.caches[hash.Sum(key)%int64(len(r.caches))]
+	return storage.Implementor().Get(r.component).GetRedis(key)
 }
 
 // BeforeProcess invoked before process message.
 // Returns true to continue the message processing.
 // Returns false to invoke Cancel for the message.
 func (r *idempotent) BeforeProcess(msg queue.Message) bool {
-	key := fmt.Sprintf(QueueIdempotentKey, msg.UniqueID(), msg.Topic())
+	key := fmt.Sprintf(QueueIdempotentKey, msg.Key(), msg.Topic())
 	locked, err := r.getRedis(key).SetNX(r.ctx, key, time.Now(), QueueIdempotentExpire).Result()
 	if err != nil {
 		return false
@@ -59,7 +60,7 @@ func (r *idempotent) AfterProcess(msg queue.Message, status queue.ProcessStatus)
 		// do nothing
 	case queue.Failed,
 		queue.Requeued:
-		key := fmt.Sprintf(QueueIdempotentKey, msg.UniqueID(), msg.Topic())
+		key := fmt.Sprintf(QueueIdempotentKey, msg.Key(), msg.Topic())
 		r.getRedis(key).Del(r.ctx, key)
 	}
 }

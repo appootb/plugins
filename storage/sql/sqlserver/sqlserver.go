@@ -19,7 +19,7 @@ func init() {
 
 type dialect struct{}
 
-func (s dialect) Open(cfg configure.Address) gorm.Dialector {
+func (s *dialect) Open(cfg configure.Address) gorm.Dialector {
 	cfg.Params[ParamDatabase] = cfg.NameSpace
 	dsn := fmt.Sprintf("sqlserver://%s:%s@%s:%s?%s",
 		cfg.Username, cfg.Password, cfg.Host, cfg.Port, cfg.Params.Encode("&"))

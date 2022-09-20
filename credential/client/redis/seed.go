@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strconv"
 	"time"
 
@@ -19,17 +20,18 @@ const (
 )
 
 var (
-	Seed = &seed{
-		ctx: context.Background(),
+	impl = &seed{
+		ctx:       context.Background(),
+		component: os.Getenv("COMPONENT"),
 	}
 )
 
 func init() {
-	credential.RegisterClientImplementor(Seed)
+	credential.RegisterClientImplementor(impl)
 }
 
-func InitRedis(s storage.Storage) {
-	Seed.caches = s.GetRedisz()
+func InitComponent(component string) {
+	impl.component = component
 }
 
 type seedInfo struct {
@@ -51,12 +53,12 @@ func (s *seedInfo) String() string {
 }
 
 type seed struct {
-	ctx    context.Context
-	caches []redis.Cmdable
+	ctx       context.Context
+	component string
 }
 
 func (s *seed) getRedis(accountID uint64) redis.Cmdable {
-	return s.caches[accountID%uint64(len(s.caches))]
+	return storage.Implementor().Get(s.component).GetRedis(accountID)
 }
 
 // Add a new secret key.

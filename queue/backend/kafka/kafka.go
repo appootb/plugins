@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -19,24 +20,30 @@ const (
 )
 
 var (
-	Backend = &kafkaBackend{}
+	impl = &kafkaBackend{}
 )
 
 func init() {
-	queue.RegisterBackendImplementor(Backend)
-}
-
-func Init(configs []configure.Address) {
-	addrs := make([]string, 0, len(configs))
-	for _, cfg := range configs {
-		addrs = append(addrs, fmt.Sprintf("%s:%s", cfg.Host, cfg.Port))
-	}
-	Backend.addrs = addrs
+	queue.RegisterBackendImplementor(impl)
 }
 
 type kafkaBackend struct {
 	addrs    []string
 	producer sync.Map
+}
+
+// Init queue backend instance.
+func (s *kafkaBackend) Init(cfg configure.Address) error {
+	hosts := strings.Split(cfg.Host, ",")
+	impl.addrs = make([]string, 0, len(hosts))
+	for _, host := range hosts {
+		if cfg.Port != "" {
+			impl.addrs = append(impl.addrs, fmt.Sprintf("%s:%s", host, cfg.Port))
+		} else {
+			impl.addrs = append(impl.addrs, host)
+		}
+	}
+	return nil
 }
 
 // Type returns backend type.

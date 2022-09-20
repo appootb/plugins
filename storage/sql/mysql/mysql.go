@@ -21,7 +21,7 @@ func init() {
 
 type dialect struct{}
 
-func (s dialect) Open(cfg configure.Address) gorm.Dialector {
+func (s *dialect) Open(cfg configure.Address) gorm.Dialector {
 	if _, ok := cfg.Params[ParamCharset]; !ok {
 		cfg.Params[ParamCharset] = "utf8mb4"
 	}

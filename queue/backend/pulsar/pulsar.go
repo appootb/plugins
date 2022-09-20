@@ -19,14 +19,20 @@ const (
 )
 
 var (
-	Backend = &pulsarBackend{}
+	impl = &pulsarBackend{}
 )
 
 func init() {
-	queue.RegisterBackendImplementor(Backend)
+	queue.RegisterBackendImplementor(impl)
 }
 
-func Init(cfg configure.Address) (err error) {
+type pulsarBackend struct {
+	client   pulsar.Client
+	producer sync.Map
+}
+
+// Init queue backend instance.
+func (s *pulsarBackend) Init(cfg configure.Address) (err error) {
 	option := pulsar.ClientOptions{
 		ConnectionTimeout:       time.Second * 5,
 		OperationTimeout:        time.Second * 30,
@@ -40,13 +46,8 @@ func Init(cfg configure.Address) (err error) {
 		option.URL = fmt.Sprintf("%s://%s", cfg.Schema, cfg.Host)
 	}
 	//
-	Backend.client, err = pulsar.NewClient(option)
+	impl.client, err = pulsar.NewClient(option)
 	return
-}
-
-type pulsarBackend struct {
-	client   pulsar.Client
-	producer sync.Map
 }
 
 // Type returns backend type.

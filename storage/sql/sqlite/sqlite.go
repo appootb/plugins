@@ -13,6 +13,6 @@ func init() {
 
 type dialect struct{}
 
-func (s dialect) Open(cfg configure.Address) gorm.Dialector {
+func (s *dialect) Open(cfg configure.Address) gorm.Dialector {
 	return sqlite.Open(cfg.NameSpace)
 }
