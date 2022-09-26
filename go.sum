@@ -72,8 +72,8 @@ github.com/appootb/grc v0.1.2/go.mod h1:BfNpW/1O4xLl7LAgAQsPTEMULaTuUHpIY5T3zSev
 github.com/appootb/protobuf/go v0.0.0-20220918144625-79bb55f1f0fb h1:4i9OWOTHvIsJassaw0N/TTCCHazaRJu4xvWM63fGwz8=
 github.com/appootb/protobuf/go v0.0.0-20220918144625-79bb55f1f0fb/go.mod h1:zShOJFL6IAKiPz6w0NsNbhSMh+5hWWxQApWS2IhbP+s=
 github.com/appootb/substratum/v2 v2.0.0-20220629155705-2489703af21f/go.mod h1:alt/BvnbQ/GWYezhy58fqL5uX9XV4csKAK5rBfBw0r8=
-github.com/appootb/substratum/v2 v2.0.0-20220920145659-ca832332a639 h1:A8ZVrj4cJNFOp1liXTpyP+Ksxf+tals92wDHxIwxMNc=
-github.com/appootb/substratum/v2 v2.0.0-20220920145659-ca832332a639/go.mod h1:alt/BvnbQ/GWYezhy58fqL5uX9XV4csKAK5rBfBw0r8=
+github.com/appootb/substratum/v2 v2.0.0 h1:RDrfJ355I4TiFRpYbTfJtFFj18RBswcfHThEg5sP9rM=
+github.com/appootb/substratum/v2 v2.0.0/go.mod h1:alt/BvnbQ/GWYezhy58fqL5uX9XV4csKAK5rBfBw0r8=
 github.com/ardielle/ardielle-go v1.5.2 h1:TilHTpHIQJ27R1Tl/iITBzMwiUGSlVfiVhwDNGM3Zj4=
 github.com/ardielle/ardielle-go v1.5.2/go.mod h1:I4hy1n795cUhaVt/ojz83SNVCYIGsAFAONtv2Dr7HUI=
 github.com/ardielle/ardielle-tools v1.5.4/go.mod h1:oZN+JRMnqGiIhrzkRN9l26Cej9dEx4jeNG6A+AdkShk=
