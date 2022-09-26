@@ -36,14 +36,17 @@ func (s *pulsarBackend) Init(cfg configure.Address) (err error) {
 	option := pulsar.ClientOptions{
 		ConnectionTimeout:       time.Second * 5,
 		OperationTimeout:        time.Second * 30,
-		Authentication:          pulsar.NewAuthenticationToken(cfg.Password),
 		MaxConnectionsPerBroker: 1,
 		MetricsCardinality:      pulsar.MetricsCardinalityNamespace,
+		Logger:                  &logWrapper{},
 	}
 	if cfg.Port != "" {
 		option.URL = fmt.Sprintf("%s://%s:%s", cfg.Schema, cfg.Host, cfg.Port)
 	} else {
 		option.URL = fmt.Sprintf("%s://%s", cfg.Schema, cfg.Host)
+	}
+	if cfg.Password != "" {
+		option.Authentication = pulsar.NewAuthenticationToken(cfg.Password)
 	}
 	//
 	impl.client, err = pulsar.NewClient(option)

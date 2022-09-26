@@ -3,6 +3,7 @@ module github.com/appootb/plugins/v2
 go 1.16
 
 require (
+	github.com/99designs/keyring v1.2.1 // indirect
 	github.com/apache/pulsar-client-go v0.8.1
 	github.com/appootb/protobuf/go v0.0.0-20220918144625-79bb55f1f0fb
 	github.com/appootb/substratum/v2 v2.0.0-20220920145659-ca832332a639

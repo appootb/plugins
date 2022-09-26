@@ -9,17 +9,15 @@ import (
 type debugLogger struct{}
 
 func (s *debugLogger) Printf(msg string, args ...interface{}) {
-	logger.Debug("kafka_debug", logger.Content{
-		"msg":  msg,
-		"args": fmt.Sprint(args...),
+	logger.Debug("QUEUE.KAFKA", logger.Content{
+		"DEBUG": fmt.Sprintf(msg, args...),
 	})
 }
 
 type errorLogger struct{}
 
 func (s *errorLogger) Printf(msg string, args ...interface{}) {
-	logger.Error("kafka_error", logger.Content{
-		"msg":  msg,
-		"args": fmt.Sprint(args...),
+	logger.Error("QUEUE.KAFKA", logger.Content{
+		"ERROR": fmt.Sprintf(msg, args...),
 	})
 }
