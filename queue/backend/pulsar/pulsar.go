@@ -29,6 +29,9 @@ func init() {
 type pulsarBackend struct {
 	client   pulsar.Client
 	producer sync.Map
+
+	clusterID string
+	namespace string
 }
 
 // Init queue backend instance.
@@ -49,6 +52,8 @@ func (s *pulsarBackend) Init(cfg configure.Address) (err error) {
 		option.Authentication = pulsar.NewAuthenticationToken(cfg.Password)
 	}
 	//
+	impl.namespace = cfg.NameSpace
+	impl.clusterID = cfg.Params["cluster_id"]
 	impl.client, err = pulsar.NewClient(option)
 	return
 }
@@ -115,6 +120,7 @@ func (s *pulsarBackend) newConsumer(topic, group string, initOffset queue.Consum
 	if initOffset == queue.ConsumeFromEarliest {
 		initPosition = pulsar.SubscriptionPositionEarliest
 	}
+	topic = fmt.Sprintf("persistent://%s/%s/%s", s.clusterID, s.namespace, topic)
 	return s.client.Subscribe(pulsar.ConsumerOptions{
 		Topic:                       topic,
 		SubscriptionName:            group,
@@ -127,6 +133,8 @@ func (s *pulsarBackend) writeMessage(ctx context.Context, topic string, msg *pul
 	var (
 		producer pulsar.Producer
 	)
+	//
+	topic = fmt.Sprintf("persistent://%s/%s/%s", s.clusterID, s.namespace, topic)
 	if p, ok := s.producer.Load(topic); ok {
 		producer = p.(pulsar.Producer)
 	} else {
