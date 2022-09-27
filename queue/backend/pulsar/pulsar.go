@@ -43,10 +43,12 @@ func (s *pulsarBackend) Init(cfg configure.Address) (err error) {
 		MetricsCardinality:      pulsar.MetricsCardinalityNamespace,
 		Logger:                  &logWrapper{},
 	}
+	//
+	schema := "http"
 	if cfg.Port != "" {
-		option.URL = fmt.Sprintf("%s://%s:%s", cfg.Schema, cfg.Host, cfg.Port)
+		option.URL = fmt.Sprintf("%s://%s:%s", schema, cfg.Host, cfg.Port)
 	} else {
-		option.URL = fmt.Sprintf("%s://%s", cfg.Schema, cfg.Host)
+		option.URL = fmt.Sprintf("%s://%s", schema, cfg.Host)
 	}
 	if cfg.Password != "" {
 		option.Authentication = pulsar.NewAuthenticationToken(cfg.Password)
