@@ -2,17 +2,20 @@ package kafka
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"log"
+	"os"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/appootb/substratum/v2/configure"
+	"github.com/appootb/substratum/v2/errors"
 	"github.com/appootb/substratum/v2/queue"
+	"github.com/appootb/substratum/v2/storage"
 	"github.com/segmentio/kafka-go"
+	"google.golang.org/grpc/codes"
 )
 
 const (
@@ -20,30 +23,40 @@ const (
 )
 
 var (
-	impl = &kafkaBackend{}
+	impl = &kafkaBackend{
+		component: os.Getenv("COMPONENT"),
+	}
 )
 
 func init() {
+	// Queue
 	queue.RegisterBackendImplementor(impl)
+	// Storage
+	storage.RegisterCommonDialectImplementor(configure.Kafka, impl)
+}
+
+func InitComponent(component string) {
+	impl.component = component
 }
 
 type kafkaBackend struct {
-	addrs    []string
-	producer sync.Map
+	component string
+	producer  sync.Map
 }
 
-// Init queue backend instance.
-func (s *kafkaBackend) Init(cfg configure.Address) error {
+func (s *kafkaBackend) Open(cfg configure.Address) (interface{}, error) {
 	hosts := strings.Split(cfg.Host, ",")
-	impl.addrs = make([]string, 0, len(hosts))
+	brokers := make([]string, 0, len(hosts))
 	for _, host := range hosts {
 		if cfg.Port != "" {
-			impl.addrs = append(impl.addrs, fmt.Sprintf("%s:%s", host, cfg.Port))
+			brokers = append(brokers, fmt.Sprintf("%s:%s", host, cfg.Port))
 		} else {
-			impl.addrs = append(impl.addrs, host)
+			brokers = append(brokers, host)
 		}
 	}
-	return nil
+	return &wrapper{
+		brokers: brokers,
+	}, nil
 }
 
 // Type returns backend type.
@@ -59,22 +72,27 @@ func (s *kafkaBackend) Ping() error {
 
 // Read subscribes the message of the specified topic.
 func (s *kafkaBackend) Read(topic string, ch chan<- queue.MessageWrapper, opts *queue.SubscribeOptions) error {
-	consumer := s.newConsumer(topic, opts.Group, opts.InitOffset)
-
-	var (
-		err error
-		msg kafka.Message
-	)
+	consumer, err := s.newConsumer(topic, opts.Group, opts.InitOffset)
+	if err != nil {
+		return err
+	}
 
 	go func() {
+		var (
+			msg kafka.Message
+		)
+
 		for {
 			msg, err = consumer.ReadMessage(opts.Context)
-			if errors.Is(err, io.EOF) {
+			if err == io.EOF {
 				err = consumer.Close()
 				if err != nil {
 					log.Println("closing kafka consumer err:", err.Error())
 				}
-				consumer = s.newConsumer(topic, opts.Group, opts.InitOffset)
+				consumer, err = s.newConsumer(topic, opts.Group, opts.InitOffset)
+				if err != nil {
+					time.Sleep(time.Second * 30)
+				}
 				continue
 			} else if err != nil {
 				log.Fatal("error from kafka consumer:", err.Error())
@@ -124,13 +142,26 @@ func (s *kafkaBackend) propsToHeaders(props map[string]string) []kafka.Header {
 	return headers
 }
 
-func (s *kafkaBackend) newConsumer(topic, group string, initOffset queue.ConsumeOffset) *kafka.Reader {
+func (s *kafkaBackend) getBrokers() ([]string, error) {
+	client := storage.Implementor().Get(s.component).GetCommon(configure.Pulsar)
+	if client == nil {
+		return nil, errors.New(codes.FailedPrecondition, "kafka backend uninitialized")
+	}
+	return client.(*wrapper).brokers, nil
+}
+
+func (s *kafkaBackend) newConsumer(topic, group string, initOffset queue.ConsumeOffset) (*kafka.Reader, error) {
 	startOffset := kafka.LastOffset
 	if initOffset == queue.ConsumeFromEarliest {
 		startOffset = kafka.FirstOffset
 	}
+	//
+	brokers, err := s.getBrokers()
+	if err != nil {
+		return nil, err
+	}
 	return kafka.NewReader(kafka.ReaderConfig{
-		Brokers:                s.addrs,
+		Brokers:                brokers,
 		GroupID:                group,
 		Topic:                  topic,
 		MinBytes:               0,
@@ -151,7 +182,7 @@ func (s *kafkaBackend) newConsumer(topic, group string, initOffset queue.Consume
 		ErrorLogger:            &errorLogger{},
 		IsolationLevel:         kafka.ReadCommitted,
 		MaxAttempts:            3,
-	})
+	}), nil
 }
 
 func (s *kafkaBackend) writeMessage(ctx context.Context, topic string, msg kafka.Message) error {
@@ -161,8 +192,12 @@ func (s *kafkaBackend) writeMessage(ctx context.Context, topic string, msg kafka
 	if p, ok := s.producer.Load(topic); ok {
 		producer = p.(*kafka.Writer)
 	} else {
+		brokers, err := s.getBrokers()
+		if err != nil {
+			return err
+		}
 		producer = &kafka.Writer{
-			Addr:         kafka.TCP(s.addrs...),
+			Addr:         kafka.TCP(brokers...),
 			Topic:        topic,
 			MaxAttempts:  10,
 			BatchSize:    1,

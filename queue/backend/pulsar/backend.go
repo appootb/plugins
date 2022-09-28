@@ -4,13 +4,18 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/apache/pulsar-client-go/pulsar"
 	"github.com/appootb/substratum/v2/configure"
+	"github.com/appootb/substratum/v2/errors"
 	"github.com/appootb/substratum/v2/queue"
+	"github.com/appootb/substratum/v2/storage"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -19,23 +24,28 @@ const (
 )
 
 var (
-	impl = &pulsarBackend{}
+	impl = &pulsarBackend{
+		component: os.Getenv("COMPONENT"),
+	}
 )
 
 func init() {
+	// Queue
 	queue.RegisterBackendImplementor(impl)
+	// Storage
+	storage.RegisterCommonDialectImplementor(configure.Pulsar, impl)
+}
+
+func InitComponent(component string) {
+	impl.component = component
 }
 
 type pulsarBackend struct {
-	client   pulsar.Client
-	producer sync.Map
-
-	clusterID string
-	namespace string
+	component string
+	producer  sync.Map
 }
 
-// Init queue backend instance.
-func (s *pulsarBackend) Init(cfg configure.Address) (err error) {
+func (s *pulsarBackend) Open(cfg configure.Address) (interface{}, error) {
 	option := pulsar.ClientOptions{
 		ConnectionTimeout:       time.Second * 5,
 		OperationTimeout:        time.Second * 30,
@@ -45,6 +55,9 @@ func (s *pulsarBackend) Init(cfg configure.Address) (err error) {
 	}
 	//
 	schema := "http"
+	if strings.ToLower(cfg.Params["ssl"]) == "true" {
+		schema = "https"
+	}
 	if cfg.Port != "" {
 		option.URL = fmt.Sprintf("%s://%s:%s", schema, cfg.Host, cfg.Port)
 	} else {
@@ -54,10 +67,15 @@ func (s *pulsarBackend) Init(cfg configure.Address) (err error) {
 		option.Authentication = pulsar.NewAuthenticationToken(cfg.Password)
 	}
 	//
-	impl.namespace = cfg.NameSpace
-	impl.clusterID = cfg.Params["cluster_id"]
-	impl.client, err = pulsar.NewClient(option)
-	return
+	client, err := pulsar.NewClient(option)
+	if err != nil {
+		return nil, err
+	}
+	return &wrapper{
+		Client:    client,
+		cluster:   cfg.Params["cluster"],
+		namespace: cfg.NameSpace,
+	}, nil
 }
 
 // Type returns backend type.
@@ -117,13 +135,26 @@ func (s *pulsarBackend) Write(topic string, content []byte, opts *queue.PublishO
 	})
 }
 
+func (s *pulsarBackend) getClient() (*wrapper, error) {
+	client := storage.Implementor().Get(s.component).GetCommon(configure.Pulsar)
+	if client == nil {
+		return nil, errors.New(codes.FailedPrecondition, "pulsar backend uninitialized")
+	}
+	return client.(*wrapper), nil
+}
+
 func (s *pulsarBackend) newConsumer(topic, group string, initOffset queue.ConsumeOffset) (pulsar.Consumer, error) {
 	initPosition := pulsar.SubscriptionPositionLatest
 	if initOffset == queue.ConsumeFromEarliest {
 		initPosition = pulsar.SubscriptionPositionEarliest
 	}
-	topic = fmt.Sprintf("persistent://%s/%s/%s", s.clusterID, s.namespace, topic)
-	return s.client.Subscribe(pulsar.ConsumerOptions{
+	//
+	client, err := s.getClient()
+	if err != nil {
+		return nil, err
+	}
+	topic = fmt.Sprintf("persistent://%s/%s/%s", client.cluster, client.namespace, topic)
+	return client.Subscribe(pulsar.ConsumerOptions{
 		Topic:                       topic,
 		SubscriptionName:            group,
 		Type:                        pulsar.Shared,
@@ -131,16 +162,20 @@ func (s *pulsarBackend) newConsumer(topic, group string, initOffset queue.Consum
 	})
 }
 
-func (s *pulsarBackend) writeMessage(ctx context.Context, topic string, msg *pulsar.ProducerMessage) (err error) {
+func (s *pulsarBackend) writeMessage(ctx context.Context, topic string, msg *pulsar.ProducerMessage) error {
 	var (
 		producer pulsar.Producer
 	)
 	//
-	topic = fmt.Sprintf("persistent://%s/%s/%s", s.clusterID, s.namespace, topic)
+	client, err := s.getClient()
+	if err != nil {
+		return err
+	}
+	topic = fmt.Sprintf("persistent://%s/%s/%s", client.cluster, client.namespace, topic)
 	if p, ok := s.producer.Load(topic); ok {
 		producer = p.(pulsar.Producer)
 	} else {
-		producer, err = s.client.CreateProducer(pulsar.ProducerOptions{
+		producer, err = client.CreateProducer(pulsar.ProducerOptions{
 			Topic:                   topic,
 			SendTimeout:             time.Second * 30,
 			DisableBlockIfQueueFull: true,
@@ -155,5 +190,5 @@ func (s *pulsarBackend) writeMessage(ctx context.Context, topic string, msg *pul
 		}
 	}
 	_, err = producer.Send(ctx, msg)
-	return
+	return err
 }
