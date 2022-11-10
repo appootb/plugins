@@ -1,11 +1,11 @@
 package redis
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"time"
 
+	sctx "github.com/appootb/substratum/v2/context"
 	"github.com/appootb/substratum/v2/queue"
 	"github.com/appootb/substratum/v2/storage"
 	"github.com/go-redis/redis/v8"
@@ -18,7 +18,6 @@ const (
 
 var (
 	impl = &idempotent{
-		ctx:       context.Background(),
 		component: os.Getenv("COMPONENT"),
 	}
 )
@@ -32,7 +31,6 @@ func InitComponent(component string) {
 }
 
 type idempotent struct {
-	ctx       context.Context
 	component string
 }
 
@@ -45,7 +43,7 @@ func (r *idempotent) getRedis(key string) redis.Cmdable {
 // Returns false to invoke Cancel for the message.
 func (r *idempotent) BeforeProcess(msg queue.Message) bool {
 	key := fmt.Sprintf(QueueIdempotentKey, msg.Key(), msg.Topic())
-	locked, err := r.getRedis(key).SetNX(r.ctx, key, time.Now(), QueueIdempotentExpire).Result()
+	locked, err := r.getRedis(key).SetNX(sctx.Context(), key, time.Now(), QueueIdempotentExpire).Result()
 	if err != nil {
 		return false
 	}
@@ -61,6 +59,6 @@ func (r *idempotent) AfterProcess(msg queue.Message, status queue.ProcessStatus)
 	case queue.Failed,
 		queue.Requeued:
 		key := fmt.Sprintf(QueueIdempotentKey, msg.Key(), msg.Topic())
-		r.getRedis(key).Del(r.ctx, key)
+		r.getRedis(key).Del(sctx.Context(), key)
 	}
 }

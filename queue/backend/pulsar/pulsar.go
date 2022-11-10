@@ -12,6 +12,7 @@ import (
 
 	"github.com/apache/pulsar-client-go/pulsar"
 	"github.com/appootb/substratum/v2/configure"
+	sctx "github.com/appootb/substratum/v2/context"
 	"github.com/appootb/substratum/v2/errors"
 	"github.com/appootb/substratum/v2/queue"
 	"github.com/appootb/substratum/v2/storage"
@@ -98,7 +99,7 @@ func (s *pulsarBackend) Read(topic string, ch chan<- queue.MessageWrapper, opts 
 
 	go func() {
 		for {
-			msg, cErr := consumer.Receive(opts.Context)
+			msg, cErr := consumer.Receive(sctx.Context())
 			if cErr != nil {
 				log.Fatal(cErr)
 			}
@@ -107,7 +108,7 @@ func (s *pulsarBackend) Read(topic string, ch chan<- queue.MessageWrapper, opts 
 			ch <- &message{
 				svr:       consumer,
 				raw:       msg,
-				ctx:       opts.Context,
+				ctx:       sctx.Context(),
 				topic:     topic,
 				group:     opts.Group,
 				key:       msg.Key(),

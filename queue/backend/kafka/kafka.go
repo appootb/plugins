@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/appootb/substratum/v2/configure"
+	sctx "github.com/appootb/substratum/v2/context"
 	"github.com/appootb/substratum/v2/errors"
 	"github.com/appootb/substratum/v2/queue"
 	"github.com/appootb/substratum/v2/storage"
@@ -83,7 +84,7 @@ func (s *kafkaBackend) Read(topic string, ch chan<- queue.MessageWrapper, opts *
 		)
 
 		for {
-			msg, err = consumer.ReadMessage(opts.Context)
+			msg, err = consumer.ReadMessage(sctx.Context())
 			if err == io.EOF {
 				err = consumer.Close()
 				if err != nil {
@@ -105,7 +106,7 @@ func (s *kafkaBackend) Read(topic string, ch chan<- queue.MessageWrapper, opts *
 			}
 			ch <- &message{
 				svr:       s,
-				ctx:       opts.Context,
+				ctx:       sctx.Context(),
 				topic:     topic,
 				group:     opts.Group,
 				key:       string(msg.Key),

@@ -8,9 +8,12 @@ import (
 	"sync"
 	"time"
 
+	sctx "github.com/appootb/substratum/v2/context"
+	"github.com/appootb/substratum/v2/logger"
 	"github.com/appootb/substratum/v2/storage"
 	"github.com/appootb/substratum/v2/task"
 	"github.com/appootb/substratum/v2/util/random"
+	"github.com/go-redis/redis/v8"
 )
 
 const (
@@ -23,26 +26,25 @@ const (
 )
 
 var (
-	touchScript = `
-	if redis.call("GET", KEYS[1]) == ARGV[1] then
-		return redis.call("expire", KEYS[1], ARGV[2])
-	else
-		return 0
-	end
-`
+	touchScript = redis.NewScript(`
+		if redis.call("GET", KEYS[1]) == ARGV[1] then
+			return redis.call("expire", KEYS[1], ARGV[2])
+		else
+			return 0
+		end
+	`)
 
-	deleteScript = `
-	if redis.call("GET", KEYS[1]) == ARGV[1] then
-		return redis.call("DEL", KEYS[1])
-	else
-		return 0
-	end
-`
+	deleteScript = redis.NewScript(`
+		if redis.call("GET", KEYS[1]) == ARGV[1] then
+			return redis.call("DEL", KEYS[1])
+		else
+			return 0
+		end
+	`)
 )
 
 var (
 	impl = &locker{
-		ctx:       context.Background(),
 		component: os.Getenv("COMPONENT"),
 	}
 )
@@ -64,7 +66,6 @@ type mutexData struct {
 }
 
 type locker struct {
-	ctx       context.Context
 	mutex     sync.Map
 	component string
 }
@@ -80,7 +81,7 @@ func (l *locker) Lock(ctx context.Context, scheduler string) context.Context {
 	rds := storage.Implementor().Get(l.component).GetRedis(mutex.key)
 
 	for {
-		reply, err := rds.SetNX(l.ctx, mutex.key, mutex.value, LockerTouchTimeout*2).Result()
+		reply, err := rds.SetNX(sctx.Context(), mutex.key, mutex.value, LockerTouchTimeout*2).Result()
 		if err != nil || !reply {
 			time.Sleep(LockerTouchTimeout)
 		} else {
@@ -101,12 +102,15 @@ func (l *locker) Unlock(scheduler string) {
 	}
 	mutex := v.(*mutexData)
 	rds := storage.Implementor().Get(l.component).GetRedis(mutex.key)
-	status, err := rds.Eval(l.ctx, deleteScript, []string{mutex.key}, mutex.value).Bool()
+	status, err := deleteScript.Run(sctx.Context(), rds, []string{mutex.key}, mutex.value).Bool()
 	if err != nil {
-		// TODO err
-	}
-	if !status {
-		// TODO failed
+		logger.Error("task.locker unlock redis key failed", logger.Content{
+			"error": err.Error(),
+		})
+	} else if !status {
+		logger.Error("task.locker unlock redis status error", logger.Content{
+			"status": status,
+		})
 	}
 	mutex.cancel()
 }
@@ -140,7 +144,7 @@ func (l *locker) renew(mutex *mutexData) error {
 	duration := fmt.Sprintf("%d", LockerTouchTimeout*2/time.Second)
 
 	for i := 0; i < 3; i++ {
-		reply, err = rds.Eval(l.ctx, touchScript, []string{mutex.key}, mutex.value, duration).Bool()
+		reply, err = touchScript.Run(sctx.Context(), rds, []string{mutex.key}, mutex.value, duration).Bool()
 		if err != nil {
 			time.Sleep(time.Second)
 			continue

@@ -1,13 +1,13 @@
 package redis
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"strconv"
 	"time"
 
+	sctx "github.com/appootb/substratum/v2/context"
 	"github.com/appootb/substratum/v2/credential"
 	"github.com/appootb/substratum/v2/errors"
 	"github.com/appootb/substratum/v2/storage"
@@ -21,7 +21,6 @@ const (
 
 var (
 	impl = &seed{
-		ctx:       context.Background(),
 		component: os.Getenv("COMPONENT"),
 	}
 )
@@ -53,7 +52,6 @@ func (s *seedInfo) String() string {
 }
 
 type seed struct {
-	ctx       context.Context
 	component string
 }
 
@@ -70,10 +68,10 @@ func (s *seed) Add(accountID uint64, keyID int64, val []byte, expire time.Durati
 		PrivateKey: val,
 		NotAfter:   time.Now().Add(expire),
 	}
-	if err := cache.HSet(s.ctx, key, field, info.String()).Err(); err != nil {
+	if err := cache.HSet(sctx.Context(), key, field, info.String()).Err(); err != nil {
 		return err
 	}
-	return cache.Expire(s.ctx, key, expire).Err()
+	return cache.Expire(sctx.Context(), key, expire).Err()
 }
 
 // Refresh gets and refreshes the secret key's expiration.
@@ -81,7 +79,7 @@ func (s *seed) Refresh(accountID uint64, keyID int64, expire time.Duration) ([]b
 	cache := s.getRedis(accountID)
 	key := fmt.Sprintf(UserSecretSeedKey, accountID)
 	field := strconv.FormatInt(keyID, 10)
-	v, err := s.getRedis(accountID).HGet(s.ctx, key, field).Result()
+	v, err := s.getRedis(accountID).HGet(sctx.Context(), key, field).Result()
 	if storage.IsEmpty(err) {
 		return nil, errors.New(codes.Unauthenticated, "Unauthenticated")
 	} else if err != nil {
@@ -93,10 +91,10 @@ func (s *seed) Refresh(accountID uint64, keyID int64, expire time.Duration) ([]b
 		return nil, err
 	}
 	info.NotAfter = time.Now().Add(expire)
-	if err = cache.HSet(s.ctx, key, field, info.String()).Err(); err != nil {
+	if err = cache.HSet(sctx.Context(), key, field, info.String()).Err(); err != nil {
 		return nil, err
 	}
-	if err = cache.Expire(s.ctx, key, expire).Err(); err != nil {
+	if err = cache.Expire(sctx.Context(), key, expire).Err(); err != nil {
 		return nil, err
 	}
 	return info.PrivateKey, nil
@@ -106,7 +104,7 @@ func (s *seed) Refresh(accountID uint64, keyID int64, expire time.Duration) ([]b
 func (s *seed) Get(accountID uint64, keyID int64) ([]byte, error) {
 	key := fmt.Sprintf(UserSecretSeedKey, accountID)
 	field := strconv.FormatInt(keyID, 10)
-	v, err := s.getRedis(accountID).HGet(s.ctx, key, field).Result()
+	v, err := s.getRedis(accountID).HGet(sctx.Context(), key, field).Result()
 	if storage.IsEmpty(err) {
 		return nil, errors.New(codes.Unauthenticated, "Unauthenticated")
 	} else if err != nil {
@@ -123,20 +121,20 @@ func (s *seed) Get(accountID uint64, keyID int64) ([]byte, error) {
 func (s *seed) Revoke(accountID uint64, keyID int64) error {
 	key := fmt.Sprintf(UserSecretSeedKey, accountID)
 	field := strconv.FormatInt(keyID, 10)
-	return s.getRedis(accountID).HDel(s.ctx, key, field).Err()
+	return s.getRedis(accountID).HDel(sctx.Context(), key, field).Err()
 }
 
 // RevokeAll removes all secret keys of the specified user ID.
 func (s *seed) RevokeAll(accountID uint64) error {
 	key := fmt.Sprintf(UserSecretSeedKey, accountID)
-	return s.getRedis(accountID).Del(s.ctx, key).Err()
+	return s.getRedis(accountID).Del(sctx.Context(), key).Err()
 }
 
 // Lock all secret keys for a specified duration.
 // Returns codes.FailedPrecondition (9).
 func (s *seed) Lock(accountID uint64, reason string, duration time.Duration) error {
 	key := fmt.Sprintf(UserSecretSeedKey, accountID)
-	kvs, err := s.getRedis(accountID).HGetAll(s.ctx, key).Result()
+	kvs, err := s.getRedis(accountID).HGetAll(sctx.Context(), key).Result()
 	if err != nil {
 		return err
 	} else if len(kvs) == 0 {
@@ -150,13 +148,13 @@ func (s *seed) Lock(accountID uint64, reason string, duration time.Duration) err
 		info.LockMessage = reason
 		vals = append(vals, field, info.String())
 	}
-	return s.getRedis(accountID).HMSet(s.ctx, key, vals...).Err()
+	return s.getRedis(accountID).HMSet(sctx.Context(), key, vals...).Err()
 }
 
 // Unlock secret keys.
 func (s *seed) Unlock(accountID uint64) error {
 	key := fmt.Sprintf(UserSecretSeedKey, accountID)
-	kvs, err := s.getRedis(accountID).HGetAll(s.ctx, key).Result()
+	kvs, err := s.getRedis(accountID).HGetAll(sctx.Context(), key).Result()
 	if err != nil {
 		return err
 	} else if len(kvs) == 0 {
@@ -169,7 +167,7 @@ func (s *seed) Unlock(accountID uint64) error {
 		info.LockMessage = ""
 		vals = append(vals, field, info.String())
 	}
-	return s.getRedis(accountID).HMSet(s.ctx, key, vals...).Err()
+	return s.getRedis(accountID).HMSet(sctx.Context(), key, vals...).Err()
 }
 
 func (s *seed) parseInfo(v string) (*seedInfo, error) {
