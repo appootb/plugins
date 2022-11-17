@@ -49,14 +49,10 @@ func init() {
 		hosts := strings.Split(uri.Host, ",")
 		cfg.Endpoints = make([]string, 0, len(hosts))
 		for _, host := range hosts {
-			if uri.Port() != "" {
-				cfg.Endpoints = append(cfg.Endpoints, fmt.Sprintf("%s://%s:%s", uri.Scheme, host, uri.Port()))
-			} else {
-				cfg.Endpoints = append(cfg.Endpoints, fmt.Sprintf("%s://%s", uri.Scheme, host))
-			}
+			cfg.Endpoints = append(cfg.Endpoints, fmt.Sprintf("%s://%s", uri.Scheme, host))
 		}
 	} else {
-		cfg.Endpoints = []string{fmt.Sprintf("%s://%s:%s", uri.Scheme, uri.Hostname(), uri.Port())}
+		cfg.Endpoints = []string{fmt.Sprintf("%s://%s", uri.Scheme, uri.Host)}
 	}
 	//
 	cli, err := clientv3.New(cfg)
