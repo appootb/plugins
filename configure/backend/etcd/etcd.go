@@ -80,7 +80,6 @@ func (p *etcd) Type() string {
 func (p *etcd) Set(key, value string) error {
 	ctx, cancel := context.WithTimeout(sctx.Context(), WriteTimeout)
 	defer cancel()
-	key = fmt.Sprintf("%s/%s", p.path, key)
 	_, err := p.Client.Put(ctx, p.path+key, value)
 	return err
 }
@@ -94,7 +93,6 @@ func (p *etcd) Get(key string, dir bool) (*configure.KVPairs, error) {
 
 	ctx, cancel := context.WithTimeout(sctx.Context(), ReadTimeout)
 	defer cancel()
-	key = fmt.Sprintf("%s/%s", p.path, key)
 	resp, err := p.Client.Get(ctx, p.path+key, options...)
 	if err != nil {
 		return nil, err
@@ -119,7 +117,6 @@ func (p *etcd) Get(key string, dir bool) (*configure.KVPairs, error) {
 func (p *etcd) Watch(key string, version uint64, dir bool) (configure.EventChan, error) {
 	eventsChan := make(configure.EventChan, DefaultChanLen)
 	//
-	key = fmt.Sprintf("%s/%s", p.path, key)
 	go p.watch(key, dir, int64(version), eventsChan)
 	//
 	return eventsChan, nil
