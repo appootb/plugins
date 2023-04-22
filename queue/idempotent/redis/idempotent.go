@@ -13,7 +13,7 @@ import (
 
 const (
 	QueueIdempotentExpire = time.Hour * 2
-	QueueIdempotentKey    = "queue:plugin:id:%s:%s"
+	QueueIdempotentKey    = "queue:plugin:id:%s:%s:%s"
 )
 
 var (
@@ -42,7 +42,7 @@ func (r *idempotent) getRedis(key string) redis.Cmdable {
 // Returns true to continue the message processing.
 // Returns false to invoke Cancel for the message.
 func (r *idempotent) BeforeProcess(msg queue.Message) bool {
-	key := fmt.Sprintf(QueueIdempotentKey, msg.Key(), msg.Topic())
+	key := fmt.Sprintf(QueueIdempotentKey, msg.Topic(), msg.Key(), msg.Group())
 	locked, err := r.getRedis(key).SetNX(sctx.Context(), key, time.Now(), QueueIdempotentExpire).Result()
 	if err != nil {
 		return false
@@ -58,7 +58,7 @@ func (r *idempotent) AfterProcess(msg queue.Message, status queue.ProcessStatus)
 		// do nothing
 	case queue.Failed,
 		queue.Requeued:
-		key := fmt.Sprintf(QueueIdempotentKey, msg.Key(), msg.Topic())
+		key := fmt.Sprintf(QueueIdempotentKey, msg.Topic(), msg.Key(), msg.Group())
 		r.getRedis(key).Del(sctx.Context(), key)
 	}
 }
