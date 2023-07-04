@@ -144,7 +144,7 @@ func (s *kafkaBackend) propsToHeaders(props map[string]string) []kafka.Header {
 }
 
 func (s *kafkaBackend) getBrokers() ([]string, error) {
-	client := storage.Implementor().Get(s.component).GetCommon(configure.Pulsar)
+	client := storage.Implementor().Get(s.component).GetCommon(configure.Kafka)
 	if client == nil {
 		return nil, errors.New(codes.FailedPrecondition, "kafka backend uninitialized")
 	}
