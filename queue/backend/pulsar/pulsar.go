@@ -22,6 +22,7 @@ import (
 
 const (
 	PropertyDelay = "PLUGIN.DELAY"
+	PropertyRetry = "PLUGIN.RETRY"
 )
 
 var (
@@ -46,8 +47,35 @@ type pulsarBackend struct {
 	producer  sync.Map
 }
 
+func (s *pulsarBackend) parseURL(cfg configure.Address) string {
+	var (
+		schema, uri string
+	)
+	//
+	switch {
+	case cfg.Params["tdmq"] != "": // Tencent TDMQ
+		schema = "http"
+		if strings.ToLower(cfg.Params["ssl"]) == "true" {
+			schema = "https"
+		}
+	default:
+		schema = "pulsar"
+		if strings.ToLower(cfg.Params["ssl"]) == "true" {
+			schema = "pulsar+ssl"
+		}
+	}
+	//
+	if cfg.Port != "" {
+		uri = fmt.Sprintf("%s://%s:%s", schema, cfg.Host, cfg.Port)
+	} else {
+		uri = fmt.Sprintf("%s://%s", schema, cfg.Host)
+	}
+	return uri
+}
+
 func (s *pulsarBackend) Open(cfg configure.Address) (interface{}, error) {
 	option := pulsar.ClientOptions{
+		URL:                     s.parseURL(cfg),
 		ConnectionTimeout:       time.Second * 5,
 		OperationTimeout:        time.Second * 30,
 		MaxConnectionsPerBroker: 1,
@@ -55,15 +83,6 @@ func (s *pulsarBackend) Open(cfg configure.Address) (interface{}, error) {
 		Logger:                  &logWrapper{},
 	}
 	//
-	schema := "http"
-	if strings.ToLower(cfg.Params["ssl"]) == "true" {
-		schema = "https"
-	}
-	if cfg.Port != "" {
-		option.URL = fmt.Sprintf("%s://%s:%s", schema, cfg.Host, cfg.Port)
-	} else {
-		option.URL = fmt.Sprintf("%s://%s", schema, cfg.Host)
-	}
 	if cfg.Password != "" {
 		option.Authentication = pulsar.NewAuthenticationToken(cfg.Password)
 	}
@@ -72,9 +91,16 @@ func (s *pulsarBackend) Open(cfg configure.Address) (interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
+	//
+	var tenant string
+	if cfg.Params["tenant"] != "" {
+		tenant = cfg.Params["tenant"]
+	} else if cfg.Params["cluster"] != "" {
+		tenant = cfg.Params["cluster"]
+	}
 	return &wrapper{
 		Client:    client,
-		cluster:   cfg.Params["cluster"],
+		tenant:    tenant,
 		namespace: cfg.NameSpace,
 	}, nil
 }
@@ -154,7 +180,7 @@ func (s *pulsarBackend) newConsumer(topic, group string, initOffset queue.Consum
 	if err != nil {
 		return nil, err
 	}
-	topic = fmt.Sprintf("persistent://%s/%s/%s", client.cluster, client.namespace, topic)
+	topic = fmt.Sprintf("persistent://%s/%s/%s", client.tenant, client.namespace, topic)
 	return client.Subscribe(pulsar.ConsumerOptions{
 		Topic:                       topic,
 		SubscriptionName:            group,
@@ -172,7 +198,7 @@ func (s *pulsarBackend) writeMessage(ctx context.Context, topic string, msg *pul
 	if err != nil {
 		return err
 	}
-	topic = fmt.Sprintf("persistent://%s/%s/%s", client.cluster, client.namespace, topic)
+	topic = fmt.Sprintf("persistent://%s/%s/%s", client.tenant, client.namespace, topic)
 	if p, ok := s.producer.Load(topic); ok {
 		producer = p.(pulsar.Producer)
 	} else {

@@ -7,6 +7,6 @@ import (
 type wrapper struct {
 	pulsar.Client
 
-	cluster   string
+	tenant    string
 	namespace string
 }
