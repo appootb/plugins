@@ -141,6 +141,9 @@ func (s *seed) Lock(accountID uint64, reason string, duration time.Duration) err
 		return nil
 	}
 	now := time.Now()
+	if duration <= 0 {
+		duration = time.Hour * 24 * 365 * 100
+	}
 	vals := make([]interface{}, 0, len(kvs)*2)
 	for field, val := range kvs {
 		info := parseSeedInfo(val)
