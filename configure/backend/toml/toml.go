@@ -13,7 +13,6 @@ import (
 	sctx "github.com/appootb/substratum/v2/context"
 	"github.com/appootb/substratum/v2/logger"
 	"github.com/fsnotify/fsnotify"
-	"github.com/pelletier/go-toml"
 )
 
 const (
@@ -22,6 +21,9 @@ const (
 )
 
 func init() {
+	if strings.HasSuffix(os.Args[0], ".test") {
+		return
+	}
 	addr := os.Getenv("TOML")
 	if addr == "" {
 		panic("empty toml config addr")
@@ -230,8 +232,8 @@ func (p *provider) load() error {
 		return nil
 	}
 	//
-	kvs := make(map[string]string)
-	if err = toml.Unmarshal(data, &kvs); err != nil {
+	kvs, err := decodeKVs(data)
+	if err != nil {
 		return err
 	}
 	//
@@ -249,7 +251,7 @@ func (p *provider) save() error {
 }
 
 func (p *provider) saveLocked() error {
-	data, err := toml.Marshal(p.kvs)
+	data, err := encodeKVs(p.kvs)
 	if err != nil {
 		return err
 	}
