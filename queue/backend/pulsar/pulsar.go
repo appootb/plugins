@@ -1,9 +1,15 @@
+// Package pulsar implements queue.Backend and a storage common dialect for Apache Pulsar
+// (including Tencent TDMQ via params.tdmq).
+//
+// Blank-import registers the backend. Call InitComponent when the storage
+// component name is not COMPONENT.
+//
+// Note: only one queue.Backend implementor may be registered process-wide.
 package pulsar
 
 import (
 	"context"
 	"fmt"
-	"log"
 	"os"
 	"strconv"
 	"strings"
@@ -14,6 +20,7 @@ import (
 	"github.com/appootb/substratum/v2/configure"
 	sctx "github.com/appootb/substratum/v2/context"
 	"github.com/appootb/substratum/v2/errors"
+	"github.com/appootb/substratum/v2/logger"
 	"github.com/appootb/substratum/v2/queue"
 	"github.com/appootb/substratum/v2/storage"
 	"google.golang.org/grpc/codes"
@@ -21,7 +28,9 @@ import (
 )
 
 const (
+	// PropertyDelay stores deliver-after delay as nanoseconds string.
 	PropertyDelay = "PLUGIN.DELAY"
+	// PropertyRetry is reserved for retry metadata (redelivery count is preferred).
 	PropertyRetry = "PLUGIN.RETRY"
 )
 
@@ -47,11 +56,9 @@ type pulsarBackend struct {
 	producer  sync.Map
 }
 
-func (s *pulsarBackend) parseURL(cfg configure.Address) string {
-	var (
-		schema, uri string
-	)
-	//
+// parseURL builds the Pulsar service URL from a storage address.
+func parseURL(cfg configure.Address) string {
+	var schema string
 	switch {
 	case cfg.Params["tdmq"] != "": // Tencent TDMQ
 		schema = "http"
@@ -64,13 +71,19 @@ func (s *pulsarBackend) parseURL(cfg configure.Address) string {
 			schema = "pulsar+ssl"
 		}
 	}
-	//
 	if cfg.Port != "" {
-		uri = fmt.Sprintf("%s://%s:%s", schema, cfg.Host, cfg.Port)
-	} else {
-		uri = fmt.Sprintf("%s://%s", schema, cfg.Host)
+		return fmt.Sprintf("%s://%s:%s", schema, cfg.Host, cfg.Port)
 	}
-	return uri
+	return fmt.Sprintf("%s://%s", schema, cfg.Host)
+}
+
+func (s *pulsarBackend) parseURL(cfg configure.Address) string {
+	return parseURL(cfg)
+}
+
+// topicPath builds persistent://tenant/namespace/topic.
+func topicPath(tenant, namespace, topic string) string {
+	return fmt.Sprintf("persistent://%s/%s/%s", tenant, namespace, topic)
 }
 
 func (s *pulsarBackend) Open(cfg configure.Address) (interface{}, error) {
@@ -127,10 +140,16 @@ func (s *pulsarBackend) Read(topic string, ch chan<- queue.MessageWrapper, opts 
 		for {
 			msg, cErr := consumer.Receive(sctx.Context())
 			if cErr != nil {
-				log.Fatal(cErr)
+				logger.Error("queue.pulsar receive", logger.Content{"error": cErr.Error()})
+				time.Sleep(time.Second)
+				continue
 			}
 
-			delay, _ := strconv.ParseInt(msg.Properties()[PropertyDelay], 10, 64)
+			props := msg.Properties()
+			var delay int64
+			if props != nil {
+				delay, _ = strconv.ParseInt(props[PropertyDelay], 10, 64)
+			}
 			ch <- &message{
 				svr:       consumer,
 				raw:       msg,
@@ -139,7 +158,7 @@ func (s *pulsarBackend) Read(topic string, ch chan<- queue.MessageWrapper, opts 
 				group:     opts.Group,
 				key:       msg.Key(),
 				content:   msg.Payload(),
-				props:     msg.Properties(),
+				props:     props,
 				timestamp: msg.PublishTime().In(time.Local),
 				delay:     time.Duration(delay),
 			}
@@ -151,6 +170,9 @@ func (s *pulsarBackend) Read(topic string, ch chan<- queue.MessageWrapper, opts 
 
 // Write publishes content data to the specified queue.
 func (s *pulsarBackend) Write(topic string, content []byte, opts *queue.PublishOptions) error {
+	if opts.Properties == nil {
+		opts.Properties = make(map[string]string)
+	}
 	opts.Properties[PropertyDelay] = strconv.FormatInt(opts.Delay.Nanoseconds(), 10)
 	return s.writeMessage(opts.Context, topic, &pulsar.ProducerMessage{
 		Payload:      content,
@@ -180,12 +202,18 @@ func (s *pulsarBackend) newConsumer(topic, group string, initOffset queue.Consum
 	if err != nil {
 		return nil, err
 	}
-	topic = fmt.Sprintf("persistent://%s/%s/%s", client.tenant, client.namespace, topic)
+	topic = topicPath(client.tenant, client.namespace, topic)
+	// RetryEnable is required for ReconsumeLater (used by message.Requeue).
+	// Without it, the client leaves DLQ/RLQ policy nil and ReconsumeLater
+	// panics on c.dlq.policy.MaxDeliveries. With RetryEnable, the client
+	// auto-creates default topics:
+	//   {topic}-{subscription}-RETRY / {topic}-{subscription}-DLQ
 	return client.Subscribe(pulsar.ConsumerOptions{
 		Topic:                       topic,
 		SubscriptionName:            group,
 		Type:                        pulsar.Shared,
 		SubscriptionInitialPosition: initPosition,
+		RetryEnable:                 true,
 	})
 }
 
@@ -198,7 +226,7 @@ func (s *pulsarBackend) writeMessage(ctx context.Context, topic string, msg *pul
 	if err != nil {
 		return err
 	}
-	topic = fmt.Sprintf("persistent://%s/%s/%s", client.tenant, client.namespace, topic)
+	topic = topicPath(client.tenant, client.namespace, topic)
 	if p, ok := s.producer.Load(topic); ok {
 		producer = p.(pulsar.Producer)
 	} else {

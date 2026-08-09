@@ -1,10 +1,17 @@
+// Package kafka implements queue.Backend and a storage common dialect for Kafka.
+//
+// Blank-import registers the backend. Configure Kafka via storage address host
+// (comma-separated brokers) and optional port. Call InitComponent when the
+// storage component name is not COMPONENT.
+//
+// Note: only one queue.Backend implementor may be registered process-wide;
+// do not blank-import both kafka and pulsar plugins.
 package kafka
 
 import (
 	"context"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"strings"
 	"sync"
@@ -13,6 +20,7 @@ import (
 	"github.com/appootb/substratum/v2/configure"
 	sctx "github.com/appootb/substratum/v2/context"
 	"github.com/appootb/substratum/v2/errors"
+	"github.com/appootb/substratum/v2/logger"
 	"github.com/appootb/substratum/v2/queue"
 	"github.com/appootb/substratum/v2/storage"
 	"github.com/segmentio/kafka-go"
@@ -20,6 +28,7 @@ import (
 )
 
 const (
+	// PropertyRetry is the header key tracking requeue attempts.
 	PropertyRetry = "PLUGIN.RETRY"
 )
 
@@ -30,12 +39,11 @@ var (
 )
 
 func init() {
-	// Queue
 	queue.RegisterBackendImplementor(impl)
-	// Storage
 	storage.RegisterCommonDialectImplementor(configure.Kafka, impl)
 }
 
+// InitComponent overrides the storage component used to resolve Kafka brokers.
 func InitComponent(component string) {
 	impl.component = component
 }
@@ -45,19 +53,26 @@ type kafkaBackend struct {
 	producer  sync.Map
 }
 
-func (s *kafkaBackend) Open(cfg configure.Address) (interface{}, error) {
+// parseBrokers builds host:port broker list from a storage address.
+func parseBrokers(cfg configure.Address) []string {
 	hosts := strings.Split(cfg.Host, ",")
 	brokers := make([]string, 0, len(hosts))
 	for _, host := range hosts {
+		host = strings.TrimSpace(host)
+		if host == "" {
+			continue
+		}
 		if cfg.Port != "" {
 			brokers = append(brokers, fmt.Sprintf("%s:%s", host, cfg.Port))
 		} else {
 			brokers = append(brokers, host)
 		}
 	}
-	return &wrapper{
-		brokers: brokers,
-	}, nil
+	return brokers
+}
+
+func (s *kafkaBackend) Open(cfg configure.Address) (interface{}, error) {
+	return &wrapper{brokers: parseBrokers(cfg)}, nil
 }
 
 // Type returns backend type.
@@ -79,31 +94,27 @@ func (s *kafkaBackend) Read(topic string, ch chan<- queue.MessageWrapper, opts *
 	}
 
 	go func() {
-		var (
-			msg kafka.Message
-		)
-
 		for {
-			msg, err = consumer.ReadMessage(sctx.Context())
-			if err == io.EOF {
-				err = consumer.Close()
-				if err != nil {
-					log.Println("closing kafka consumer err:", err.Error())
+			msg, rerr := consumer.ReadMessage(sctx.Context())
+			if rerr == io.EOF {
+				if cerr := consumer.Close(); cerr != nil {
+					logger.Error("queue.kafka close consumer", logger.Content{"error": cerr.Error()})
 				}
-				consumer, err = s.newConsumer(topic, opts.Group, opts.InitOffset)
-				if err != nil {
+				consumer, rerr = s.newConsumer(topic, opts.Group, opts.InitOffset)
+				if rerr != nil {
+					logger.Error("queue.kafka recreate consumer", logger.Content{"error": rerr.Error()})
 					time.Sleep(time.Second * 30)
 				}
 				continue
-			} else if err != nil {
-				log.Fatal("error from kafka consumer:", err.Error())
+			} else if rerr != nil {
+				// Do not process.Exit: keep retrying so a transient broker blip
+				// does not take down the whole service.
+				logger.Error("queue.kafka read", logger.Content{"error": rerr.Error()})
+				time.Sleep(time.Second)
+				continue
 			}
 
-			//
-			props := make(map[string]string, len(msg.Headers))
-			for _, header := range msg.Headers {
-				props[header.Key] = string(header.Value)
-			}
+			props := headersToProps(msg.Headers)
 			ch <- &message{
 				svr:       s,
 				ctx:       sctx.Context(),
@@ -122,17 +133,22 @@ func (s *kafkaBackend) Read(topic string, ch chan<- queue.MessageWrapper, opts *
 
 // Write publishes content data to the specified queue.
 func (s *kafkaBackend) Write(topic string, content []byte, opts *queue.PublishOptions) error {
+	if opts.Properties == nil {
+		opts.Properties = make(map[string]string)
+	}
 	opts.Properties[PropertyRetry] = "0"
-	//
 	msg := kafka.Message{
 		Key:     []byte(opts.Key),
 		Value:   content,
-		Headers: s.propsToHeaders(opts.Properties),
+		Headers: propsToHeaders(opts.Properties),
 	}
 	return s.writeMessage(opts.Context, topic, msg)
 }
 
-func (s *kafkaBackend) propsToHeaders(props map[string]string) []kafka.Header {
+func propsToHeaders(props map[string]string) []kafka.Header {
+	if len(props) == 0 {
+		return nil
+	}
 	headers := make([]kafka.Header, 0, len(props))
 	for k, v := range props {
 		headers = append(headers, kafka.Header{
@@ -141,6 +157,14 @@ func (s *kafkaBackend) propsToHeaders(props map[string]string) []kafka.Header {
 		})
 	}
 	return headers
+}
+
+func headersToProps(headers []kafka.Header) map[string]string {
+	props := make(map[string]string, len(headers))
+	for _, header := range headers {
+		props[header.Key] = string(header.Value)
+	}
+	return props
 }
 
 func (s *kafkaBackend) getBrokers() ([]string, error) {

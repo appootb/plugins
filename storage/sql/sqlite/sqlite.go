@@ -1,3 +1,7 @@
+// Package sqlite registers a GORM SQL dialect for SQLite.
+//
+// Blank-import; only one SQL dialect implementor may be registered process-wide.
+// The database file path is taken from Address.NameSpace.
 package sqlite
 
 import (

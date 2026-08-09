@@ -1,3 +1,8 @@
+// Package redis implements task.Locker with Redis SETNX + lease renewal.
+//
+// Key: task:scheduler:locker:{scheduler}
+// Value: random token; Lua scripts renew/delete only if token matches.
+// Lock blocks until acquired; a background touch extends the TTL until Unlock.
 package redis
 
 import (
@@ -53,6 +58,7 @@ func init() {
 	task.RegisterLockerImplementor(impl)
 }
 
+// InitComponent overrides the storage component used for Redis.
 func InitComponent(component string) {
 	impl.component = component
 }
@@ -68,27 +74,48 @@ type mutexData struct {
 type locker struct {
 	mutex     sync.Map
 	component string
+	redisFor  func(key string) redis.Cmdable
+}
+
+func (l *locker) getRedis(key string) redis.Cmdable {
+	if l.redisFor != nil {
+		return l.redisFor(key)
+	}
+	return storage.Implementor().Get(l.component).GetRedis(key)
+}
+
+// lockerKey builds the Redis key for a scheduler name.
+func lockerKey(scheduler string) string {
+	return fmt.Sprintf(TaskLockerKey, scheduler)
 }
 
 // Lock tries to get the locker of the scheduler,
-// should be blocked before acquired the locker.
+// blocking until acquired. Returns a child context canceled on Unlock or lease loss.
 func (l *locker) Lock(ctx context.Context, scheduler string) context.Context {
 	mutex := &mutexData{
-		key:   fmt.Sprintf(TaskLockerKey, scheduler),
+		key:   lockerKey(scheduler),
 		value: random.String(RandomValueLength),
 	}
 	mutex.ctx, mutex.cancel = context.WithCancel(ctx)
-	rds := storage.Implementor().Get(l.component).GetRedis(mutex.key)
+	rds := l.getRedis(mutex.key)
 
 	for {
+		// Respect parent cancellation while waiting for the lock.
+		select {
+		case <-ctx.Done():
+			mutex.cancel()
+			return mutex.ctx
+		default:
+		}
+
 		reply, err := rds.SetNX(sctx.Context(), mutex.key, mutex.value, LockerTouchTimeout*2).Result()
 		if err != nil || !reply {
 			time.Sleep(LockerTouchTimeout)
-		} else {
-			l.mutex.Store(scheduler, mutex)
-			go l.touch(mutex)
-			break
+			continue
 		}
+		l.mutex.Store(scheduler, mutex)
+		go l.touch(mutex)
+		break
 	}
 
 	return mutex.ctx
@@ -101,7 +128,7 @@ func (l *locker) Unlock(scheduler string) {
 		return
 	}
 	mutex := v.(*mutexData)
-	rds := storage.Implementor().Get(l.component).GetRedis(mutex.key)
+	rds := l.getRedis(mutex.key)
 	status, err := deleteScript.Run(sctx.Context(), rds, []string{mutex.key}, mutex.value).Bool()
 	if err != nil {
 		logger.Error("task.locker unlock redis key failed", logger.Content{
@@ -112,21 +139,21 @@ func (l *locker) Unlock(scheduler string) {
 			"status": status,
 		})
 	}
+	l.mutex.Delete(scheduler)
 	mutex.cancel()
 }
 
 func (l *locker) touch(mutex *mutexData) {
 	ticker := time.NewTicker(LockerTouchTimeout)
+	defer ticker.Stop()
 
 	for {
 		select {
-		// Unlocked or parent context canceled.
 		case <-mutex.ctx.Done():
 			return
 
 		case <-ticker.C:
-			err := l.renew(mutex)
-			if err != nil {
+			if err := l.renew(mutex); err != nil {
 				mutex.cancel()
 				return
 			}
@@ -140,7 +167,7 @@ func (l *locker) renew(mutex *mutexData) error {
 		reply bool
 	)
 
-	rds := storage.Implementor().Get(l.component).GetRedis(mutex.key)
+	rds := l.getRedis(mutex.key)
 	duration := fmt.Sprintf("%d", LockerTouchTimeout*2/time.Second)
 
 	for i := 0; i < 3; i++ {
@@ -151,9 +178,8 @@ func (l *locker) renew(mutex *mutexData) error {
 		}
 		if reply {
 			return nil
-		} else {
-			return errors.New("unlocked")
 		}
+		return errors.New("unlocked")
 	}
 
 	return err

@@ -2,39 +2,47 @@ package toml
 
 import (
 	"encoding/json"
+	"fmt"
 	"sort"
 	"strings"
 
 	substratum "github.com/appootb/substratum/v2/plugin/configure"
-	toml "github.com/pelletier/go-toml"
+	"github.com/pelletier/go-toml/v2"
 )
 
+// parseItemJSON unmarshals a ConfigItem JSON blob stored as a KV value.
 func parseItemJSON(s string) (substratum.ConfigItem, error) {
 	var item substratum.ConfigItem
 	err := json.Unmarshal([]byte(s), &item)
 	return item, err
 }
 
+// decodeKVs loads flat key→ConfigItemJSON map from file bytes.
+//
+// Supports:
+//  1. Legacy flat form: quoted full paths as keys, JSON strings as values
+//  2. Hierarchical form: nested tables with type/value leaf fields
 func decodeKVs(data []byte) (map[string]string, error) {
 	if len(data) == 0 {
 		return map[string]string{}, nil
 	}
-	//
+
 	flat := make(map[string]string)
 	if err := toml.Unmarshal(data, &flat); err == nil && isLegacyFlat(flat) {
 		return flat, nil
 	}
-	//
-	tree, err := toml.LoadBytes(data)
-	if err != nil {
+
+	var root map[string]interface{}
+	if err := toml.Unmarshal(data, &root); err != nil {
 		return nil, err
 	}
-	//
+
 	kvs := make(map[string]string)
-	collectItems(tree, nil, kvs)
+	collectItems(root, nil, kvs)
 	return kvs, nil
 }
 
+// isLegacyFlat reports whether every value looks like a JSON ConfigItem object.
 func isLegacyFlat(flat map[string]string) bool {
 	if len(flat) == 0 {
 		return false
@@ -47,40 +55,49 @@ func isLegacyFlat(flat map[string]string) bool {
 	return true
 }
 
-func collectItems(tree *toml.Tree, path []string, kvs map[string]string) {
-	for _, key := range tree.Keys() {
-		node := tree.Get(key)
-		switch v := node.(type) {
-		case *toml.Tree:
-			if isConfigLeaf(v) {
-				kvs[strings.Join(append(path, key), "/")] = leafItem(v).String()
-				continue
-			}
-			collectItems(v, append(path, key), kvs)
+func collectItems(node map[string]interface{}, path []string, kvs map[string]string) {
+	for key, val := range node {
+		child, ok := val.(map[string]interface{})
+		if !ok {
+			continue
 		}
+		if isConfigLeaf(child) {
+			kvs[strings.Join(append(path, key), "/")] = leafItem(child).String()
+			continue
+		}
+		// Copy path for recursion: append reuses backing array across iterations.
+		next := append(append([]string{}, path...), key)
+		collectItems(child, next, kvs)
 	}
 }
 
-func isConfigLeaf(tree *toml.Tree) bool {
-	hasType := tree.Get("type") != nil || tree.Get("Type") != nil
-	hasValue := tree.Get("value") != nil || tree.Get("Value") != nil
+func isConfigLeaf(node map[string]interface{}) bool {
+	_, hasType := getField(node, "type", "Type")
+	_, hasValue := getField(node, "value", "Value")
 	return hasType && hasValue
 }
 
-func leafItem(tree *toml.Tree) substratum.ConfigItem {
+func leafItem(node map[string]interface{}) substratum.ConfigItem {
 	return substratum.ConfigItem{
-		Type:    getString(tree, "type", "Type"),
-		Schema:  getString(tree, "schema", "Schema"),
-		Value:   getString(tree, "value", "Value"),
-		Comment: getString(tree, "comment", "Comment"),
+		Type:    getString(node, "type", "Type"),
+		Schema:  getString(node, "schema", "Schema"),
+		Value:   getString(node, "value", "Value"),
+		Comment: getString(node, "comment", "Comment"),
 	}
 }
 
-func getString(tree *toml.Tree, keys ...string) string {
+func getField(node map[string]interface{}, keys ...string) (interface{}, bool) {
 	for _, key := range keys {
-		if v := tree.Get(key); v != nil {
-			return toString(v)
+		if v, ok := node[key]; ok && v != nil {
+			return v, true
 		}
+	}
+	return nil, false
+}
+
+func getString(node map[string]interface{}, keys ...string) string {
+	if v, ok := getField(node, keys...); ok {
+		return toString(v)
 	}
 	return ""
 }
@@ -92,9 +109,11 @@ func toString(v interface{}) string {
 	if s, ok := v.(string); ok {
 		return s
 	}
-	return ""
+	// TOML may decode numbers/bools as non-string types.
+	return fmt.Sprint(v)
 }
 
+// encodeKVs writes hierarchical TOML from flat path→ConfigItemJSON map.
 func encodeKVs(kvs map[string]string) ([]byte, error) {
 	root := make(map[string]interface{})
 	keys := make([]string, 0, len(kvs))
@@ -102,7 +121,7 @@ func encodeKVs(kvs map[string]string) ([]byte, error) {
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
-	//
+
 	for _, key := range keys {
 		item, err := parseItemJSON(kvs[key])
 		if err != nil {
@@ -121,7 +140,7 @@ func insertItem(root map[string]interface{}, parts []string, item substratum.Con
 		root[parts[0]] = itemFields(item)
 		return
 	}
-	//
+
 	child, ok := root[parts[0]]
 	if !ok {
 		child = make(map[string]interface{})

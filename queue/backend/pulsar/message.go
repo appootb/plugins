@@ -2,6 +2,7 @@ package pulsar
 
 import (
 	"context"
+	"strconv"
 	"time"
 
 	"github.com/apache/pulsar-client-go/pulsar"
@@ -57,9 +58,24 @@ func (m *message) NotBefore() time.Time {
 	return m.timestamp.Add(m.delay)
 }
 
-// Retry times.
+// Retry returns how many times this message has already been requeued via
+// ReconsumeLater (property RECONSUMETIMES). Falls back to broker redelivery
+// count when the property is absent (e.g. first delivery or Nack path).
+//
+// Prefer RECONSUMETIMES: ReconsumeLater republishes onto the retry topic as a
+// new message, so RedeliveryCount often resets to 0 and would break MaxRetry.
 func (m *message) Retry() int {
-	return int(m.raw.RedeliveryCount())
+	if m.props != nil {
+		if s, ok := m.props[pulsar.SysPropertyReconsumeTimes]; ok && s != "" {
+			if n, err := strconv.Atoi(s); err == nil {
+				return n
+			}
+		}
+	}
+	if m.raw != nil {
+		return int(m.raw.RedeliveryCount())
+	}
+	return 0
 }
 
 // IsPing returns true for a ping message.
@@ -72,16 +88,18 @@ func (m *message) Begin() {}
 
 // Cancel indicates the message should be ignored.
 func (m *message) Cancel() {
-	m.svr.Ack(m.raw)
+	_ = m.svr.Ack(m.raw)
 }
 
 // End indicates a successful process.
 func (m *message) End() {
-	m.svr.Ack(m.raw)
+	_ = m.svr.Ack(m.raw)
 }
 
-// Requeue indicates the message should be retried.
+// Requeue schedules redelivery via Pulsar retry letter topic (requires
+// RetryEnable on the consumer). Delay grows with prior reconsume count.
 func (m *message) Requeue() {
+	// ReconsumeLater panics if the consumer was created without RetryEnable.
 	m.svr.ReconsumeLater(m.raw, time.Duration(m.Retry())*time.Second)
 }
 

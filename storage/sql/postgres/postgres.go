@@ -1,3 +1,6 @@
+// Package postgres registers a GORM SQL dialect for PostgreSQL.
+//
+// Blank-import; only one SQL dialect implementor may be registered process-wide.
 package postgres
 
 import (
@@ -15,11 +18,16 @@ func init() {
 
 type dialect struct{}
 
-func (s *dialect) Open(cfg configure.Address) gorm.Dialector {
+// buildDSN constructs the pgx/libpq-style keyword DSN.
+func buildDSN(cfg configure.Address) string {
 	dsn := fmt.Sprintf("host=%s port=%s user=%s dbname=%s password=%s",
 		cfg.Host, cfg.Port, cfg.Username, cfg.NameSpace, cfg.Password)
 	if params := cfg.Params.Encode(" "); params != "" {
 		dsn = fmt.Sprintf("%s %s", dsn, params)
 	}
-	return postgres.Open(dsn)
+	return dsn
+}
+
+func (s *dialect) Open(cfg configure.Address) gorm.Dialector {
+	return postgres.Open(buildDSN(cfg))
 }

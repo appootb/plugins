@@ -77,13 +77,16 @@ func (m *message) Cancel() {}
 // End indicates a successful process.
 func (m *message) End() {}
 
-// Requeue indicates the message should be retried.
+// Requeue indicates the message should be retried (publish again with Retry+1).
 func (m *message) Requeue() {
+	if m.props == nil {
+		m.props = make(map[string]string)
+	}
 	m.props[PropertyRetry] = strconv.Itoa(m.Retry() + 1)
 	err := m.svr.writeMessage(m.ctx, m.topic, kafka.Message{
 		Key:     []byte(m.key),
 		Value:   m.content,
-		Headers: m.svr.propsToHeaders(m.Properties()),
+		Headers: propsToHeaders(m.Properties()),
 		Time:    m.timestamp,
 	})
 	if err != nil {
